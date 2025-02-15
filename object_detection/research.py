@@ -1,3 +1,6 @@
+# research script for Object detection
+# UNTESTED as of reading week*****
+
 # use this command to install:
 # pip install ultralytics opencv-python
 
