@@ -21,7 +21,7 @@ from split_dataset import split_dataset
 dataset_is_split = False
 
 # Your labels map as a dictionary (zero is reserved):
-label_map = {1: 'trafficlight', 2: 'stop', 3: 'speedlimit', 4: 'crosswalk'}
+label_map = {1: 'duck_regular', 2: 'duck_specialty', 3: 'sign_stop', 4: 'sign_oneway_right', 5: 'sign_oneway_left', 6: 'sign_noentry', 7: 'sign_yield', 8: 'road_crosswalk', 9: 'road_oneway', 10: 'vehicle'}
 
 # Specify the path to all images and annotations.
 images_in = '/content/dataset/images'
