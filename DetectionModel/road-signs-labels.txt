@@ -1,4 +1,10 @@
-trafficlight
-stop
-speedlimit
-crosswalk
+duck_regular
+duck_specialty
+sign_stop
+sign_oneway_right
+sign_oneway_left
+sign_noentry
+sign_yield
+road_crosswalk
+road_oneway
+vehicle
