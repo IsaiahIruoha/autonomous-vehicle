@@ -14,12 +14,12 @@ BASE_SPEED = 3        # Lower base speed for safety
 MAX_TURN_SPEED = 15   # Max speed on straight or gentle curves
 
 # PD Gains (tune these!)
-KP = 0.10
-KD = 0.05
+KP = 0.20
+KD = 0.10
 
 # Steering angle smoothing (0 < ALPHA < 1)
 # Higher ALPHA => more smoothing
-ALPHA = 0.5
+ALPHA = 0.2
 
 # Camera tilt angles
 CAMERA_TILT_DEFAULT = -10
@@ -78,18 +78,29 @@ def steering_control(error):
     # Clamp to mechanical limits
     return clamp(raw_steering, STEERING_LEFT_LIMIT, STEERING_RIGHT_LIMIT)
 
+def draw_roi_polygon(frame, roi_vertices, color=(0, 255, 0), thickness=2):
+    """Draws the ROI polygon on the frame for visualization."""
+    pts = roi_vertices.reshape((-1, 1, 2))
+    cv2.polylines(frame, [pts], isClosed=True, color=color, thickness=thickness)
+
 def region_of_interest(img, visualize_on_frame=None):
+    """
+    Define a trapezoid or rectangle to keep only 
+    the bottom portion of the image.
+    """
     height, width = img.shape[:2]
     
-    top_left_y = int(0.4 * height)
-    top_right_y = int(0.4 * height)
-    
+    # Lower these if you want to see more above
+    top_left_y = int(0.35 * height)  # was 0.4
+    top_right_y = int(0.35 * height)
+
     roi_vertices = np.array([[
-        (0, height),                # bottom-left
-        (0, top_left_y),            # top-left
-        (width, top_right_y),       # top-right
-        (width, height)             # bottom-right
+        (0, height),        # bottom-left
+        (0, top_left_y),    # top-left
+        (width, top_right_y), 
+        (width, height)     # bottom-right
     ]], dtype=np.int32)
+    
     
     if visualize_on_frame is not None:
         draw_roi_polygon(visualize_on_frame, roi_vertices)
@@ -97,13 +108,10 @@ def region_of_interest(img, visualize_on_frame=None):
     mask = np.zeros_like(img)
     cv2.fillPoly(mask, roi_vertices, 255)
     return cv2.bitwise_and(img, mask)
-
-def draw_roi_polygon(frame, roi_vertices, color=(0, 255, 0), thickness=2):
-    """
-    Draws the ROI polygon on the frame for visualization.
-    """
-    pts = roi_vertices.reshape((-1, 1, 2))
-    cv2.polylines(frame, [pts], isClosed=True, color=color, thickness=thickness)
+    
+def apply_gaussian_blur(frame, ksize=5):
+    """Optional noise reduction before Canny."""
+    return cv2.GaussianBlur(frame, (ksize, ksize), 0) 
 
 def get_line_params(x1, y1, x2, y2):
     """
@@ -155,6 +163,8 @@ def process_frame(frame):
     global last_steering_angle
     global last_left_avg, last_right_avg
     global lost_frames_count
+
+    frame_blur = apply_gaussian_blur(frame, ksize=5)
 
     # Convert to HSV
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -286,10 +296,10 @@ def process_frame(frame):
     px.set_dir_servo_angle(steer_angle)
     adjust_camera_tilt(steer_angle)
 
-    sleep(0.05)
+    # sleep(0.05)
 
     # The sharper the turn, the slower we go
-    turn_factor = 0.3
+    turn_factor = 0.5
     MIN_SPEED = 1.0  # or 1.0 for extra caution
     raw_speed = BASE_SPEED - turn_factor * abs(steer_angle)
     speed = clamp(raw_speed, MIN_SPEED, MAX_TURN_SPEED)
@@ -313,7 +323,7 @@ def process_frame(frame):
     cv2.line(frame, (int(frame_center_x), y_ref), (int(lane_center_x), y_ref),
              (0, 255, 0), 2)
 
-    # Optionally draw the stored left/right lines in the frame
+    # Draw left line
     if last_left_avg is not None:
         slope, intercept = last_left_avg
         y1_draw = height
@@ -322,6 +332,7 @@ def process_frame(frame):
         x2_draw = int((y2_draw - intercept) / slope)
         cv2.line(frame, (x1_draw, y1_draw), (x2_draw, y2_draw), (255, 0, 0), 3)
 
+    # Draw right line
     if last_right_avg is not None:
         slope, intercept = last_right_avg
         y1_draw = height
@@ -341,7 +352,8 @@ try:
             break
 
         processed_frame, mask_white, mask_yellow, combined_mask = process_frame(frame)
-
+        
+        # Display Windows
         cv2.imshow("Lane Detection", processed_frame)
         cv2.imshow("White Mask", mask_white)
         cv2.imshow("Yellow Mask", mask_yellow)
