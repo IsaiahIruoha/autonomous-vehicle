@@ -10,20 +10,20 @@ STEERING_LEFT_LIMIT = -45
 STEERING_RIGHT_LIMIT = 45
 
 # Speed settings
-BASE_SPEED = 5        # Lower base speed for safety
-MAX_TURN_SPEED = 15   # Max speed on straight or gentle curves
+BASE_SPEED = 2        # Lower base speed for safety
+MAX_TURN_SPEED = 20   # Max speed on straight or gentle curves
 
 # PD Gains (tune these!)
-KP = 0.10
-KD = 0.05
+KP = 0.15
+KD = 0.10
 
 # Steering angle smoothing (0 < ALPHA < 1)
 # Higher ALPHA => more smoothing
-ALPHA = 0.7
+ALPHA = 0.2
 
 # Camera tilt angles
-CAMERA_TILT_DEFAULT = -15
-CAMERA_TILT_LEFT = -20
+CAMERA_TILT_DEFAULT = 0
+CAMERA_TILT_LEFT = -10
 CAMERA_TILT_RIGHT = -10
 
 # If lines are lost for too many frames, slow/stop
@@ -47,8 +47,9 @@ lost_frames_count = 0
 # Initialize
 px.set_cam_tilt_angle(CAMERA_TILT_DEFAULT)
 cap = cv2.VideoCapture(0)
-cap.set(3, 640)  # width
-cap.set(4, 480)  # height
+
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
 sleep(0.5)  # Let camera/wheels settle
 
@@ -77,28 +78,46 @@ def steering_control(error):
     # Clamp to mechanical limits
     return clamp(raw_steering, STEERING_LEFT_LIMIT, STEERING_RIGHT_LIMIT)
 
-def region_of_interest(img):
-    """
-    Define a static polygon mask that keeps only the
-    bottom portion of the image, where we expect to see lane lines.
-    """
+def region_of_interest(img, visualize_on_frame=None):
     height, width = img.shape[:2]
-    mask = np.zeros_like(img)
-    # Example: trapezoid from bottom up to ~60% height
+    
+    top_left_y = int(0.4 * height)
+    top_right_y = int(0.4 * height)
+    
     roi_vertices = np.array([[
-        (0, height),
-        (0, int(0.6 * height)),
-        (width, int(0.6 * height)),
-        (width, height)
+        (0, height),                # bottom-left
+        (0, top_left_y),            # top-left
+        (width, top_right_y),       # top-right
+        (width, height)             # bottom-right
     ]], dtype=np.int32)
+    
+    if visualize_on_frame is not None:
+        draw_roi_polygon(visualize_on_frame, roi_vertices)
+
+    mask = np.zeros_like(img)
     cv2.fillPoly(mask, roi_vertices, 255)
     return cv2.bitwise_and(img, mask)
+
+def draw_roi_polygon(frame, roi_vertices, color=(0, 255, 0), thickness=2):
+    """
+    Draws the ROI polygon on the frame for visualization.
+    """
+    pts = roi_vertices.reshape((-1, 1, 2))
+    cv2.polylines(frame, [pts], isClosed=True, color=color, thickness=thickness)
 
 def get_line_params(x1, y1, x2, y2):
     """
     Return (slope, intercept) for the line in y=mx+b form,
     or None if line is vertical.
     """
+    if (x2 - x1) == 0:
+        return None
+    slope = (y2 - y1) / (x2 - x1)
+    intercept = y1 - slope * x1
+    return (slope, intercept)
+
+def get_line_params(x1, y1, x2, y2):
+    """Return (slope, intercept) in y=mx+b form, or None if vertical."""
     if (x2 - x1) == 0:
         return None
     slope = (y2 - y1) / (x2 - x1)
@@ -152,8 +171,8 @@ def process_frame(frame):
     mask_white = cv2.bitwise_or(mask_white_1, mask_white_2)
 
     # Yellow lines
-    lower_yellow = np.array([18, 94, 140], dtype=np.uint8)
-    upper_yellow = np.array([48, 255, 255], dtype=np.uint8)
+    lower_yellow = np.array([15, 70, 100], dtype=np.uint8)
+    upper_yellow = np.array([50, 255, 255], dtype=np.uint8)
     mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
     # Combine white + yellow
@@ -171,9 +190,9 @@ def process_frame(frame):
         roi_edges,
         rho=1,
         theta=np.pi / 180,
-        threshold=40,
-        minLineLength=30,
-        maxLineGap=50
+        threshold=30, # confidence for a line
+        minLineLength=20,
+        maxLineGap=25
     )
 
     # reference the bottom portion for lane center
@@ -201,6 +220,11 @@ def process_frame(frame):
                 left_params_list.append((slope, intercept))
             else:
                 right_params_list.append((slope, intercept))
+
+    if len(left_params_list) == 0:
+        print("[DEBUG] No left line detected this frame.")
+    if len(right_params_list) == 0:
+        print("[DEBUG] No right line detected this frame.")
 
     # If we found left lines, average them => exponential smoothing
     if len(left_params_list) > 0:
@@ -262,9 +286,13 @@ def process_frame(frame):
     px.set_dir_servo_angle(steer_angle)
     adjust_camera_tilt(steer_angle)
 
+    sleep(0.05)
+
     # The sharper the turn, the slower we go
-    turn_factor = 0.2
-    speed = clamp(BASE_SPEED - turn_factor * abs(steer_angle), 0, MAX_TURN_SPEED)
+    turn_factor = 0.3
+    MIN_SPEED = 1.0  # or 1.0 for extra caution
+    raw_speed = BASE_SPEED - turn_factor * abs(steer_angle)
+    speed = clamp(raw_speed, MIN_SPEED, MAX_TURN_SPEED)
 
     # If lines have been missing recently, slow further
     if lost_frames_count > 2:
