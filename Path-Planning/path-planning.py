@@ -12,7 +12,6 @@ authKey = "40"  # For lab testing, this is your team number.
 team = 40
 
 # The following A* implementation calculates a path from a start to a goal position on a grid.
-# In a real application, the grid should reflect the actual map (obstacles, roads, etc.).
 class Node:
     def __init__(self, x, y, cost=0, parent=None):
         self.x = x
