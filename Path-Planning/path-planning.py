@@ -11,8 +11,7 @@ AUTH_KEY = "40"          # For lab testing, your team number is used as auth
 TEAM = 40
 
 # ---------------- Graph Definition ----------------
-# Sample graph representation of intersections.
-# Coordinates are in meters. (You might want to convert from centimeters.)
+# Coordinates are in meters
 # Each node is given a coordinate and a list of neighboring nodes with associated cost.
 graph = {
     # --- Vertical Road: Beak St. ---
