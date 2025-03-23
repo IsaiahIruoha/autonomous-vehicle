@@ -9,8 +9,8 @@ STEERING_LEFT_LIMIT = -45
 STEERING_RIGHT_LIMIT = 45
 STEERING_NEUTRAL = 0
 
-BASE_SPEED = 10     # Baseline forward speed
-MAX_TURN_SPEED = 25 # Speed limit while turning
+BASE_SPEED = 5    
+MAX_TURN_SPEED = 15 
 
 CAMERA_TILT_DEFAULT = -15
 CAMERA_TILT_LEFT = -20
@@ -18,12 +18,17 @@ CAMERA_TILT_RIGHT = -10
 
 has_started = False  # To track if the car just started moving
 
-# Will tune these later
-KP = 0.15  # Proportional gain
-KD = 0.10  # Derivative gain
+# Reduced PD gains
+KP = 0.10  # was 0.15 before
+KD = 0.05  # was 0.10 before
 
 # For PD Control
 last_error = 0.0
+
+# Adjust ALPHA (0 < ALPHA < 1) for smoothing changes
+# The higher the ALPHA, the more "memory" I like to think
+ALPHA = 0.7
+last_steering_angle = 0.0  # used for smoothing
 
 px.set_cam_tilt_angle(CAMERA_TILT_DEFAULT)
 cap = cv2.VideoCapture(0)
@@ -46,17 +51,16 @@ def adjust_camera_tilt(current_steering_angle):
     else:
         px.set_cam_tilt_angle(CAMERA_TILT_DEFAULT)
         
-     
 def steering_control(error):
     """
     PD control for smoother steering:
     steering = KP * error + KD * (error - last_error)
     """
     global last_error
-
+    
     derivative = error - last_error
     steering = KP * error + KD * derivative
-    
+
     # Update last_error
     last_error = error
 
@@ -71,7 +75,6 @@ def region_of_interest(img):
     """
     mask = np.zeros_like(img)
     
-    # Example: trapezoid from the bottom up ~halfway as a test
     roi_vertices = np.array([[
         (0, 480),
         (0, 300),
@@ -92,8 +95,9 @@ def process_frame(frame):
     7) Classify lines, compute center
     8) PD steering
     """
-    
-    
+    global has_started
+    global last_steering_angle  ### NEW ###
+
     # Convert to HSV
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     
@@ -107,7 +111,6 @@ def process_frame(frame):
     
     # -------------------------------------------------
     # Yellow lines
-    # Adjust these depending on your lighting conditions
     # -------------------------------------------------
     lower_yellow = np.array([18, 94, 140], dtype=np.uint8)
     upper_yellow = np.array([48, 255, 255], dtype=np.uint8)
@@ -117,7 +120,7 @@ def process_frame(frame):
     combined_mask = cv2.bitwise_or(mask_white, mask_yellow)
     
     # -------------------------------------------------
-    # Morphological Ops (tweak kernel as needed)
+    # Morphological Ops
     # -------------------------------------------------
     kernel = np.ones((5, 5), np.uint8)
     combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
@@ -134,14 +137,14 @@ def process_frame(frame):
     # -------------------------------------------------
     # Hough Lines
     # -------------------------------------------------
-    lines = cv2.HoughLinesP(roi_edges, 1, np.pi/180, 40, minLineLength=30, maxLineGap=50)
+    lines = cv2.HoughLinesP(roi_edges, 1, np.pi/180, 40, 
+                            minLineLength=30, maxLineGap=50)
 
     if lines is None:
-        # No lines --> possibly stop or keep going
         print("No lane lines found; stopping for safety.")
         px.set_cam_tilt_angle(CAMERA_TILT_DEFAULT)  # face forward
         px.stop()
-        return frame
+        return frame, mask_white, mask_yellow, combined_mask
     
     # -------------------------------------------------
     # Separate lines into left vs right
@@ -150,7 +153,7 @@ def process_frame(frame):
     right_lines = []
     for line in lines:
         x1, y1, x2, y2 = line[0]
-        slope = (y2 - y1) / (x2 - x1 + 1e-6)  # avoid /0
+        slope = (y2 - y1) / (x2 - x1 + 1e-6)  # avoid div by zero
         # Filter near-horizontal
         if abs(slope) < 0.2:
             continue
@@ -163,42 +166,47 @@ def process_frame(frame):
         print("No valid left/right lines; stopping.")
         px.stop()
         px.set_cam_tilt_angle(CAMERA_TILT_DEFAULT) 
-        return frame
+        return frame, mask_white, mask_yellow, combined_mask
 
     # Approximate lane center
     frame_center_x = frame.shape[1] // 2  # ~320
     lane_center_x = frame_center_x  # default
     
+    # If we see both lines, take their average
     if left_lines and right_lines:
-        left_x_avg = np.mean([ (x1 + x2) / 2.0 for (x1,y1,x2,y2) in left_lines ])
-        right_x_avg = np.mean([ (x1 + x2) / 2.0 for (x1,y1,x2,y2) in right_lines ])
+        left_x_avg = np.mean([(x1 + x2) / 2.0 for (x1, y1, x2, y2) in left_lines])
+        right_x_avg = np.mean([(x1 + x2) / 2.0 for (x1, y1, x2, y2) in right_lines])
         lane_center_x = (left_x_avg + right_x_avg) / 2.0
     elif left_lines:
-        left_x_avg = np.mean([ (x1 + x2) / 2.0 for (x1,y1,x2,y2) in left_lines ])
+        left_x_avg = np.mean([(x1 + x2) / 2.0 for (x1, y1, x2, y2) in left_lines])
         lane_center_x = left_x_avg + 80  # shift from left line
     elif right_lines:
-        right_x_avg = np.mean([ (x1 + x2) / 2.0 for (x1,y1,x2,y2) in right_lines ])
+        right_x_avg = np.mean([(x1 + x2) / 2.0 for (x1, y1, x2, y2) in right_lines])
         lane_center_x = right_x_avg - 80  # shift from right line
         
-     # -------------------------------------------------
+    # -------------------------------------------------
     # Steering via PD
     # -------------------------------------------------
-    # Negative error means lane is left of center (need to turn left).
-    # Positive error means lane is right of center (need to turn right).
     error = lane_center_x - frame_center_x
-    steer_angle = steering_control(error)
+    steer_angle_raw = steering_control(error)
 
+    # Smooth the steering angle to avoid jitter
+    steer_angle = ALPHA * last_steering_angle + (1 - ALPHA) * steer_angle_raw
+    last_steering_angle = steer_angle
+    
     px.set_dir_servo_angle(steer_angle)
     adjust_camera_tilt(steer_angle)
 
+    # -------------------------------------------------
     # Slow down more if turning
-    if abs(steer_angle) > 10:
-        speed = clamp(BASE_SPEED + 0.5 * abs(steer_angle), BASE_SPEED, MAX_TURN_SPEED)
-    else:
-        speed = BASE_SPEED
-        
-    # Let the car start smoothly the first time
-    global has_started
+    # (Bigger angle => slower speed)
+    # -------------------------------------------------
+    turn_factor = 0.2  # tune this if you want
+    speed = clamp(BASE_SPEED - turn_factor * abs(steer_angle),
+                  0,  # don't go below 0
+                  MAX_TURN_SPEED)
+
+    # Start the car moving
     px.forward(speed)
 
     if not has_started:
@@ -206,18 +214,18 @@ def process_frame(frame):
         has_started = True
     
     # Left lines in blue
-    for (x1,y1,x2,y2) in left_lines:
-        cv2.line(frame, (x1,y1), (x2,y2), (255, 0, 0), 3)
+    for (x1, y1, x2, y2) in left_lines:
+        cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 0), 3)
     # Right lines in red
-    for (x1,y1,x2,y2) in right_lines:
-        cv2.line(frame, (x1,y1), (x2,y2), (0, 0, 255), 3)
+    for (x1, y1, x2, y2) in right_lines:
+        cv2.line(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
         
     # Draw lane center vs frame center
     cv2.circle(frame, (int(lane_center_x), 400), 5, (0,255,0), -1)
     cv2.circle(frame, (int(frame_center_x), 400), 5, (0,255,255), -1)
     cv2.line(frame, (int(frame_center_x), 400), (int(lane_center_x), 400), (0,255,0), 2)
 
-    return frame, mask_white, mask_yellow, combined_mask 
+    return frame, mask_white, mask_yellow, combined_mask
 
 # ============================
 #    Main Loop
@@ -232,7 +240,6 @@ try:
         processed_frame, mask_white, mask_yellow, combined_mask = process_frame(frame)
         
         cv2.imshow("Lane Detection", processed_frame)
-        
         cv2.imshow("White Mask", mask_white)
         cv2.imshow("Yellow Mask", mask_yellow)
         cv2.imshow("Combined Mask", combined_mask)
