@@ -1,212 +1,404 @@
+#!/usr/bin/env python3
 import json
+import math
 import time
 from urllib import request
-import heapq
-import math
 
-# VPFS Server Configuration
-# For in-lab testing, use the provided server details.
-server_ip = "192.168.2.183"  # Replace with the actual server IP when available.
-server = f"http://{server_ip}:5000"
-authKey = "40"  # For lab testing, this is your team number.
-team = 40
+# VPFS server configuration; update these as needed for lab/home/competition.
+SERVER_IP = "127.0.0.1"  # placeholder IP; change to the actual server IP
+SERVER = f"http://{SERVER_IP}:5000"
+AUTH_KEY = "40"          # For lab testing, your team number is used as auth
+TEAM = 40
 
-# The following A* implementation calculates a path from a start to a goal position on a grid.
-class Node:
-    def __init__(self, x, y, cost=0, parent=None):
-        self.x = x
-        self.y = y
-        self.cost = cost
-        self.parent = parent
+# ---------------- Graph Definition ----------------
+# Sample graph representation of intersections.
+# Coordinates are in meters. (You might want to convert from centimeters.)
+# Each node is given a coordinate and a list of neighboring nodes with associated cost.
+graph = {
+    # --- Vertical Road: Beak St. ---
+    "A": {  # Aquatic Ave. & Beak St. (452, 29 → (4.52, 0.29))
+        "coord": (4.52, 0.29),
+        "neighbors": {
+            "P": 1.06  # A <-> P
+        }
+    },
+    "P": {  # Migration Ave. & Beak St. (452, 135 → (4.52, 1.35))
+        "coord": (4.52, 1.35),
+        "neighbors": {
+            "A": 1.06,
+            "V": 0.98
+        }
+    },
+    "V": {  # Pondside Ave. & Beak St. (452, 233 → (4.52, 2.33))
+        "coord": (4.52, 2.33),
+        "neighbors": {
+            "P": 0.98,
+            "I": 0.60
+        }
+    },
+    "I": {  # Dabbler Dr. & Beak St. (452, 293 → (4.52, 2.93))
+        "coord": (4.52, 2.93),
+        "neighbors": {
+            "V": 0.60,
+            "L": 1.09
+        }
+    },
+    "L": {  # Drake Dr. & Beak St. (452, 402 → (4.52, 4.02))
+        "coord": (4.52, 4.02),
+        "neighbors": {
+            "I": 1.09,
+            "AB": 0.63
+        }
+    },
+    "AB": {  # Tail Ave. & Beak St. (452, 465 → (4.52, 4.65))
+        "coord": (4.52, 4.65),
+        "neighbors": {
+            "L": 0.63,
+            "N": 0.09
+        }
+    },
+    "N": {  # Duckling Dr. & Beak St. (452, 474 → (4.52, 4.74))
+        "coord": (4.52, 4.74),
+        "neighbors": {
+            "AB": 0.09
+        }
+    },
 
-    def __lt__(self, other):
-        # Allow comparison based on cost for the priority queue.
-        return self.cost < other.cost
+    # --- Vertical Road: Feather St. ---
+    "B": {  # Feather St. & (assumed) vertical Feather (305, 29 → (3.05, 0.29))
+        "coord": (3.05, 0.29),
+        "neighbors": {
+            "Q": 1.06
+        }
+    },
+    "Q": {  # (Feather St., 305, 135 → (3.05, 1.35))
+        "coord": (3.05, 1.35),
+        "neighbors": {
+            "B": 1.06,
+            "W": 0.98
+        }
+    },
+    "W": {  # (Feather St., 305, 233 → (3.05, 2.33))
+        "coord": (3.05, 2.33),
+        "neighbors": {
+            "Q": 0.98,
+            "G": 0.63
+        }
+    },
+    "G": {  # The Circle & Feather St. (305, 296 → (3.05, 2.96))
+        "coord": (3.05, 2.96),
+        "neighbors": {
+            "W": 0.63
+        }
+    },
 
-def euclidean_distance(node1, node2):
-    """Heuristic: Euclidean distance between two nodes."""
-    return math.sqrt((node1.x - node2.x)**2 + (node1.y - node2.y)**2)
+    # --- Vertical Road: Quack St. ---
+    "S": {  # Quack St. (29, 135 → (0.29, 1.35))
+        "coord": (0.29, 1.35),
+        "neighbors": {
+            "Y": 1.94
+        }
+    },
+    "Y": {  # Quack St. (28, 329 → (0.28, 3.29))
+        "coord": (0.28, 3.29),
+        "neighbors": {
+            "S": 1.94
+        }
+    },
 
-def reconstruct_path(node):
-    """Backtrack from goal to start to build the path."""
-    path = []
-    while node:
-        path.append((node.x, node.y))
-        node = node.parent
-    return path[::-1]
+    # --- Horizontal Road: Waddle Way ---
+    "C": {  # Waddle Way (129, 29 → (1.29, 0.29))
+        "coord": (1.29, 0.29),
+        "neighbors": {
+            "T": 1.06
+        }
+    },
+    "T": {  # Waddle Way (129, 135 → (1.29, 1.35))
+        "coord": (1.29, 1.35),
+        "neighbors": {
+            "C": 1.06,
+            "AA": 1.34
+        }
+    },
+    "AA": {  # Waddle Way (157, 266 → (1.57, 2.66))
+        "coord": (1.57, 2.66),
+        "neighbors": {
+            "T": 1.34,
+            "F": 1.95
+        }
+    },
+    "F": {  # Waddle Way (181, 459 → (1.81, 4.59))
+        "coord": (1.81, 4.59),
+        "neighbors": {
+            "AA": 1.95
+        }
+    },
 
-def a_star(start, goal, grid):
-    """
-    A* algorithm to compute the shortest path from start to goal on a grid.
-    - start: starting Node.
-    - goal: destination Node.
-    - grid: 2D list representing the map (0 = free, 1 = obstacle).
-    """
-    rows, cols = len(grid), len(grid[0])
-    pq = []
-    heapq.heappush(pq, (0, start))
-    visited = set()
+    # --- Horizontal Road: Waterfoul Way. ---
+    "D": {  # Waterfoul Way. (213, 29 → (2.13, 0.29))
+        "coord": (2.13, 0.29),
+        "neighbors": {
+            "U": 1.06
+        }
+    },
+    "U": {  # Waterfoul Way. (213, 135 → (2.13, 1.35))
+        "coord": (2.13, 1.35),
+        "neighbors": {
+            "D": 1.06,
+            "Z": 1.06
+        }
+    },
+    "Z": {  # Waterfoul Way. (214, 241 → (2.14, 2.41))
+        "coord": (2.14, 2.41),
+        "neighbors": {
+            "U": 1.06,
+            "H": 0.89
+        }
+    },
+    "H": {  # Waterfoul Way. (273, 307 → (2.73, 3.07))
+        "coord": (2.73, 3.07),
+        "neighbors": {
+            "Z": 0.89
+        }
+    },
 
-    while pq:
-        _, current = heapq.heappop(pq)
+    # --- Horizontal Road: Mallard St. ---
+    "R": {  # Mallard St. (585, 135 → (5.85, 1.35))
+        "coord": (5.85, 1.35),
+        "neighbors": {
+            "X": 0.98
+        }
+    },
+    "X": {  # Mallard St. (585, 233 → (5.85, 2.33))
+        "coord": (5.85, 2.33),
+        "neighbors": {
+            "R": 0.98,
+            "K": 0.60
+        }
+    },
+    "K": {  # Mallard St. (585, 293 → (5.85, 2.93))
+        "coord": (5.85, 2.93),
+        "neighbors": {
+            "X": 0.60,
+            "M": 0.62,
+            "O": 0.62
+        }
+    },
+    "M": {  # Mallard St. (576, 354 → (5.76, 3.54))
+        "coord": (5.76, 3.54),
+        "neighbors": {
+            "K": 0.62,
+            "O": 0.17
+        }
+    },
+    "O": {  # Mallard St. (593, 354 → (5.93, 3.54))
+        "coord": (5.93, 3.54),
+        "neighbors": {
+            "K": 0.62,
+            "M": 0.17
+        }
+    },
 
-        if (current.x, current.y) == (goal.x, goal.y):
-            return reconstruct_path(current)
+    # --- Horizontal Road: The Circle ---
+    "J": {  # The Circle (350, 324 → (3.50, 3.24))
+        "coord": (3.50, 3.24),
+        "neighbors": {
+            "AC": 0.65
+        }
+    },
+    "AC": {  # The Circle (335, 387 → (3.35, 3.87))
+        "coord": (3.35, 3.87),
+        "neighbors": {
+            "J": 0.65,
+            "E": 0.51
+        }
+    },
+    "E": {  # Breadcrumb Ave. & The Circle (284, 393 → (2.84, 3.93))
+        "coord": (2.84, 3.93),
+        "neighbors": {
+            "AC": 0.51
+        }
+    },
 
-        visited.add((current.x, current.y))
+    # --- Single intersections (no same-road neighbor) ---
+    "K": {  # Dabbler Dr. is represented by I (already in Beak St. group)
+        # Already defined as I.
+    },
+    # Nodes with unique horizontal road names (only one intersection on that road)
+    # Aquatic Ave.: A already defined.
+    # Dabbler Dr.: I already defined.
+    # Drake Dr.: L already defined.
+    # Duckling Dr.: N already defined.
+    # Migration Ave.: P already defined.
+    # Pondside Ave.: V already defined.
+    # Tail Ave.: AB already defined.
+}
 
-        # Explore neighbors: up, down, left, right.
-        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            new_x, new_y = current.x + dx, current.y + dy
-            if 0 <= new_x < rows and 0 <= new_y < cols:
-                if (new_x, new_y) not in visited and grid[new_x][new_y] == 0:
-                    neighbor = Node(new_x, new_y, current.cost + 1, current)
-                    total_cost = neighbor.cost + euclidean_distance(neighbor, goal)
-                    heapq.heappush(pq, (total_cost, neighbor))
+
+# ---------------- A* Path Planning ----------------
+def heuristic(node, goal):
+    """Euclidean distance between two nodes as the heuristic."""
+    x1, y1 = graph[node]["coord"]
+    x2, y2 = graph[goal]["coord"]
+    return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+
+def a_star(start, goal):
+    """Computes the shortest path from start to goal using A*."""
+    open_set = {start}
+    came_from = {}
+    g_score = {node: float("inf") for node in graph}
+    g_score[start] = 0
+    f_score = {node: float("inf") for node in graph}
+    f_score[start] = heuristic(start, goal)
+
+    while open_set:
+        # Choose the node with the lowest f_score.
+        current = min(open_set, key=lambda node: f_score[node])
+        if current == goal:
+            # Reconstruct the path.
+            path = [current]
+            while current in came_from:
+                current = came_from[current]
+                path.append(current)
+            path.reverse()
+            return path
+
+        open_set.remove(current)
+        for neighbor, cost in graph[current]["neighbors"].items():
+            tentative_g = g_score[current] + cost
+            if tentative_g < g_score[neighbor]:
+                came_from[neighbor] = current
+                g_score[neighbor] = tentative_g
+                f_score[neighbor] = tentative_g + heuristic(neighbor, goal)
+                if neighbor not in open_set:
+                    open_set.add(neighbor)
     return None
 
-def get_match_status():
-    """Retrieve current match status from the VPFS server."""
-    res = request.urlopen(server + f"/match?auth={authKey}")
-    if res.status == 200:
-        return json.loads(res.read())
-    else:
-        print("Error fetching match status")
-        return None
+# ---------------- VPFS API Communication ----------------
+def get_current_position(team):
+    """Fetches the current vehicle position from VPFS."""
+    url = SERVER + f"/WhereAmI/{team}"
+    with request.urlopen(url) as res:
+        if res.status == 200:
+            data = json.loads(res.read())
+            pos = data[0]["position"]
+            return pos["x"], pos["y"]
+        else:
+            print("Error fetching current position.")
+            return None
 
-def get_fares(all_fares=False):
-    """
-    Retrieve a list of available fares.
-    Set all_fares=True to include past fares as well.
-    """
-    url = server + f"/fares?all={str(all_fares)}"
-    res = request.urlopen(url)
-    if res.status == 200:
-        return json.loads(res.read())
-    else:
-        print("Error fetching fares")
-        return []
+def get_available_fares():
+    """Retrieves the list of available fares."""
+    url = SERVER + "/fares"
+    with request.urlopen(url) as res:
+        if res.status == 200:
+            return json.loads(res.read())
+        else:
+            print("Error fetching fares.")
+            return None
 
 def claim_fare(fare_id):
-    """Attempt to claim a fare using its ID."""
-    res = request.urlopen(server + f"/fares/claim/{fare_id}?auth={authKey}")
-    if res.status == 200:
-        response = json.loads(res.read())
-        return response[0]['success']
-    return False
+    """Attempts to claim a fare using its ID."""
+    url = SERVER + f"/fares/claim/{fare_id}?auth={AUTH_KEY}"
+    with request.urlopen(url) as res:
+        if res.status == 200:
+            data = json.loads(res.read())
+            return data["success"]
+        else:
+            print("Error claiming fare.")
+            return False
 
-def get_current_fare():
-    """
-    Check the current fare status using /fares/current/<team>.
-    Returns the payload containing fare details and a message.
-    """
-    res = request.urlopen(server + f"/fares/current/{team}")
-    if res.status == 200:
-        return json.loads(res.read())
-    else:
-        print("Error fetching current fare status")
-        return None
+def get_current_fare(team):
+    """Gets the current active fare for the team."""
+    url = SERVER + f"/fares/current/{team}"
+    with request.urlopen(url) as res:
+        if res.status == 200:
+            data = json.loads(res.read())
+            return data["fare"]
+        else:
+            print("Error fetching current fare.")
+            return None
 
-def get_position():
-    """
-    Get the current vehicle position from the VPFS GPS API.
-    Returns a Node representing the vehicle's position.
-    """
-    res = request.urlopen(server + f"/WhereAmI/{team}")
-    if res.status == 200:
-        position_data = json.loads(res.read())
-        position = position_data[0]['position']
-        return Node(position['x'], position['y'])
-    return None
+# ---------------- Utility ----------------
+def nearest_node(x, y):
+    """Returns the nearest graph node to the (x,y) position."""
+    best_node = None
+    best_dist = float("inf")
+    for node, info in graph.items():
+        cx, cy = info["coord"]
+        dist = math.sqrt((cx - x) ** 2 + (cy - y) ** 2)
+        if dist < best_dist:
+            best_dist = dist
+            best_node = node
+    return best_node
 
-# The GPS system uses a coordinate system with the origin in the bottom-left corner.
-# Positive Y is up and positive X is to the right.
-#
-# The following intersections are provided in centimeters (accurate to within ±3cm).
-# These can be used to refine your map grid or serve as reference points.
-#
-# intersections = {
-#   "Aquatic Ave. & Beak St.": (452, 29),
-#   "Feather St. & ?": (305, 29),       # Adjust vertical road if needed.
-#   "Waddle Way & ?": (129, 29),
-#   "Waterfoul Way & ?": (213, 29),
-#   "Breadcrumb Ave. & The Circle": (284, 393),
-#   "Waddle Way & ?": (181, 459),
-#   "The Circle & Feather St.": (305, 296),
-#   "Waterfoul Way & ?": (273, 307),
-#   "Dabbler Dr. & Beak St.": (452, 293),
-#   "The Circle": (350, 324),
-#   "Mallard St. & ?": (585, 293),
-#   "Drake Dr. & Beak St.": (452, 402),
-#   "Mallard St. & ?": (576, 354),
-#   "Duckling Dr. & Beak St.": (452, 474),
-#   "Mallard St. & ?": (593, 354),
-#   "Migration Ave. & Beak St.": (452, 135),
-#   "Feather St. & ?": (305, 135),
-#   "Mallard St. & ?": (585, 135),
-#   "Quack St.": (29, 135),
-#   "Waddle Way": (129, 135),
-#   "Waterfoul Way": (213, 135),
-#   "Pondside Ave. & Beak St.": (452, 233),
-#   "Feather St. & ?": (305, 233),
-#   "Mallard St. & ?": (585, 233),
-#   "Quack St.": (28, 329),
-#   "Waterfoul Way": (214, 241),
-#   "Waddle Way": (157, 266),
-#   "Tail Ave. & Beak St.": (452, 465),
-#   "The Circle & Tail Ave.": (335, 387)
-# }
-#
+# ---------------- Main Path Planning Logic ----------------
+def main():
+    print("=== Autonomous Taxi Path Planning ===")
+    # Get current vehicle position
+    pos = get_current_position(TEAM)
+    if pos is None:
+        return
+    print("Current position (x, y):", pos)
+
+    # Get list of fares and claim the first unclaimed one
+    fares = get_available_fares()
+    if fares is None:
+        return
+    chosen_fare = None
+    for fare in fares:
+        if not fare["claimed"]:
+            chosen_fare = fare
+            break
+    if chosen_fare is None:
+        print("No available fare to claim.")
+        return
+
+    if not claim_fare(chosen_fare["id"]):
+        print("Failed to claim fare:", chosen_fare["id"])
+        return
+    print("Fare claimed successfully, ID:", chosen_fare["id"])
+
+    # Get detailed fare information
+    fare_details = get_current_fare(TEAM)
+    if fare_details is None:
+        print("No active fare found.")
+        return
+
+    pickup = fare_details["src"]
+    dropoff = fare_details["dest"]
+    print("Fare Pickup (x, y):", (pickup["x"], pickup["y"]))
+    print("Fare Dropoff (x, y):", (dropoff["x"], dropoff["y"]))
+
+    # Map the positions to the nearest nodes in our graph.
+    current_node = nearest_node(*pos)
+    pickup_node = nearest_node(pickup["x"], pickup["y"])
+    dropoff_node = nearest_node(dropoff["x"], dropoff["y"])
+
+    print("Mapped current position to node:", current_node)
+    print("Mapped pickup position to node:", pickup_node)
+    print("Mapped dropoff position to node:", dropoff_node)
+
+    # Compute the route from current position to pickup
+    route_to_pickup = a_star(current_node, pickup_node)
+    if route_to_pickup is None:
+        print("No route found to pickup location.")
+        return
+    print("Planned route to pickup:", route_to_pickup)
+
+    # Compute the route from pickup to dropoff
+    route_to_dropoff = a_star(pickup_node, dropoff_node)
+    if route_to_dropoff is None:
+        print("No route found to dropoff location.")
+        return
+    print("Planned route to dropoff:", route_to_dropoff)
+
+    # Combine routes (avoid duplicate pickup node)
+    overall_route = route_to_pickup + route_to_dropoff[1:]
+    print("Overall planned route:", overall_route)
+
+    # In an actual vehicle, the computed route would now be used to generate control commands.
+    # For this example, we only print the route.
 
 if __name__ == "__main__":
-    match_status = get_match_status()
-    if match_status:
-        print("Match Status:")
-        print(f"Mode: {match_status['mode']}")
-        print(f"Match Number: {match_status['match']}")
-        print(f"Match Start: {match_status['matchStart']}")
-        print(f"Time Remaining: {match_status['timeRemain']}")
-        print(f"Team: {match_status['team']}")
-        print(f"In Match: {match_status['inMatch']}")
-        
-        if not match_status['matchStart']:
-            print("Match has not started. Exiting.")
-            exit(0)
-    else:
-        print("Could not retrieve match status. Exiting.")
-        exit(1)
-
-    fares = get_fares(all_fares=False)
-    
-    for fare in fares:
-        if not fare['claimed']:
-            if claim_fare(fare['id']):
-                print(f"Claimed fare {fare['id']}")
-                
-                current_fare = get_current_fare()
-                if current_fare and current_fare[0]['fare'] is not None:
-                    print("Current Fare Info:")
-                    print(json.dumps(current_fare[0]['fare'], indent=2))
-                else:
-                    print("No active fare found in current fare status.")
-                
-                start = get_position()
-                if start is None:
-                    print("Could not retrieve vehicle position.")
-                    break
-                
-                goal = Node(fare['dest']['x'], fare['dest']['y'])
-                
-                # Replace this with your real map grid in a full implementation.
-                grid = [[0 for _ in range(100)] for _ in range(100)]
-                
-                path = a_star(start, goal, grid)
-                if path:
-                    print("Path to destination:", path)
-                else:
-                    print("No path found to the destination.")
-                break  # Process one fare at a time.
-            else:
-                print(f"Failed to claim fare {fare['id']}")
-        else:
-            print(f"Fare {fare['id']} already claimed")
+    main()
