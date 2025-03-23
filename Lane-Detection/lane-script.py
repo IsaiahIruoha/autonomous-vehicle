@@ -10,21 +10,21 @@ STEERING_LEFT_LIMIT = -45
 STEERING_RIGHT_LIMIT = 45
 
 # Speed settings
-BASE_SPEED = 2        # Lower base speed for safety
-MAX_TURN_SPEED = 20   # Max speed on straight or gentle curves
+BASE_SPEED = 3        # Lower base speed for safety
+MAX_TURN_SPEED = 15   # Max speed on straight or gentle curves
 
 # PD Gains (tune these!)
-KP = 0.15
-KD = 0.10
+KP = 0.10
+KD = 0.05
 
 # Steering angle smoothing (0 < ALPHA < 1)
 # Higher ALPHA => more smoothing
-ALPHA = 0.2
+ALPHA = 0.5
 
 # Camera tilt angles
-CAMERA_TILT_DEFAULT = 0
+CAMERA_TILT_DEFAULT = -10
 CAMERA_TILT_LEFT = -10
-CAMERA_TILT_RIGHT = -10
+CAMERA_TILT_RIGHT = 0
 
 # If lines are lost for too many frames, slow/stop
 MAX_LOST_FRAMES = 5

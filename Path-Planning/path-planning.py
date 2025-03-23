@@ -12,7 +12,6 @@ authKey = "40"  # For lab testing, this is your team number.
 team = 40
 
 # The following A* implementation calculates a path from a start to a goal position on a grid.
-# In a real application, the grid should reflect the actual map (obstacles, roads, etc.).
 class Node:
     def __init__(self, x, y, cost=0, parent=None):
         self.x = x
@@ -65,63 +64,6 @@ def a_star(start, goal, grid):
                     total_cost = neighbor.cost + euclidean_distance(neighbor, goal)
                     heapq.heappush(pq, (total_cost, neighbor))
     return None
-
-# The VPFS server provides the following endpoints:
-#
-# 1. /match?auth=<auth>
-#    Returns the current match status:
-#    {
-#      "mode": "home" | "lab" | "match",
-#      "match": int,
-#      "matchStart": bool,
-#      "timeRemain": float,
-#      "team": int,
-#      "inMatch": bool,
-#    }
-#
-# 2. /fares?all=[True|False]
-#    Returns a list of available fares:
-#    [
-#      {
-#        "id": int,
-#        "modifiers": int,
-#        "src": {"x": float, "y": float},
-#        "dest": {"x": float, "y": float},
-#        "claimed": bool,
-#        "expiry": float,
-#        "pay": float,
-#        "reputation": int
-#      }
-#    ]
-#
-# 3. /fares/claim/<idx>?auth=<auth>
-#    Claims the fare with the given id.
-#    Response payload:
-#    [
-#      {
-#        "success": bool,
-#        "message": str
-#      }
-#    ]
-#
-# 4. /fares/current/<team>
-#    Returns the current fare status for your team:
-#    [
-#      {
-#        "fare": { ... } | None,
-#        "message": str
-#      }
-#    ]
-#
-# 5. /WhereAmI/<team>
-#    Returns the vehicle's GPS position:
-#    [
-#      {
-#        "position": {"x": float, "y": float},
-#        "last_update": int,
-#        "message": str
-#      }
-#    ]
 
 def get_match_status():
     """Retrieve current match status from the VPFS server."""
