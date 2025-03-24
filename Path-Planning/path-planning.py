@@ -7,12 +7,12 @@ from urllib import request
 # VPFS server configuration; update these as needed for lab/home/competition.
 SERVER_IP = "127.0.0.1"  # placeholder IP; change to the actual server IP
 SERVER = f"http://{SERVER_IP}:5000"
-AUTH_KEY = "40"          # For lab testing, your team number is used as auth
+AUTH_KEY = "40" #our team number
 TEAM = 40
 
-# ---------------- Graph Definition ----------------
+# GRAPH
 # Coordinates are in meters
-# Each node is given a coordinate and a list of neighboring nodes with associated cost.
+# Each node is given a coordinate and a list of neighboring nodes with associated cost (euclidean)
 graph = {
     # --- Vertical Road: Beak St. ---
     "A": {  # Aquatic Ave. & Beak St. (452, 29 → (4.52, 0.29))
