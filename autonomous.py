@@ -586,7 +586,7 @@ def main():
         px.stop()
         turn_off_brake_lights()
         cap.release()
-        cv2.destroyAllWindows()u
+        cv2.destroyAllWindows()
 
 # Entry Point
 if __name__ == "__main__":
