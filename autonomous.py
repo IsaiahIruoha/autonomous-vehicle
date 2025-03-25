@@ -240,9 +240,8 @@ def process_frame(px_obj, frame):
 
 # Object Detection Setup 
 def path(name):
-    """Helper for model/label file paths."""
     root = os.path.dirname(os.path.realpath(__file__))
-    return os.path.join(root, name)
+    return os.path.join(root, "DetectionModel", name)
 
 # Model/Labels
 ROAD_SIGN_DETECTION_MODEL_EDGETPU = path('efficientdet-lite-road-signs_edgetpu.tflite')
