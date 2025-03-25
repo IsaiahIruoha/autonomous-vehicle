@@ -51,7 +51,6 @@ def blink_right_signal(duration=5, on_time=0.5, off_time=0.5):
 
 try:
     turn_on_brake_lights()
-    # time.sleep(10)
     #turn_off_brake_lights()
     #blink_left_signal()
     #blink_right_signal()
