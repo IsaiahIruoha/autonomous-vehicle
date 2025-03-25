@@ -9,7 +9,7 @@ px = Picarx()
 STEERING_LEFT_LIMIT = -45
 STEERING_RIGHT_LIMIT = 45
 
-BASE_SPEED = 3       # Base speed for normal operation
+BASE_SPEED = 2      # Base speed for normal operation
 MAX_TURN_SPEED = 15  # Max speed on straight or gentle curves
 
 KP = 0.20
