@@ -19,9 +19,9 @@ from pycoral.utils.dataset import read_label_file
 # Steering & Speed
 STEERING_LEFT_LIMIT   = -45
 STEERING_RIGHT_LIMIT  =  45
-BASE_SPEED            =  0.75
+BASE_SPEED            =  0.5
 MAX_TURN_SPEED        = 20
-MIN_SPEED             =  0.75
+MIN_SPEED             =  0.5
 
 # For Proportional and Derivative, if it weaves back and forth increase KD and decrease KP
 KP = 0.15 
@@ -437,14 +437,14 @@ def main():
             px.set_dir_servo_angle(final_steer_angle)
             adjust_camera_tilt(px, final_steer_angle)
 
-            #  If we’re steering left more than 15°, blink left
-            if final_steer_angle < -15:
+            #  If we’re steering left more than 25°, blink left
+            if final_steer_angle < -25:
                 blink_left_signal(duration=1, on_time=0.2, off_time=0.2)
-            elif final_steer_angle > 15:
+            elif final_steer_angle > 25:
                 blink_right_signal(duration=1, on_time=0.2, off_time=0.2)
 
             # Speed logic
-            turn_factor = 0.5  # higher increase slow sharply for big steering angles
+            turn_factor = 0.75  # higher increase slow sharply for big steering angles
             raw_speed = BASE_SPEED - turn_factor * abs(final_steer_angle)
             speed = clamp(raw_speed, MIN_SPEED, MAX_TURN_SPEED)
             if yield_mode:
