@@ -24,27 +24,27 @@ MAX_TURN_SPEED        = 20
 MIN_SPEED             =  0.5
 
 # For Proportional and Derivative, if it weaves back and forth increase KD and decrease KP
-KP = 0.20
-KD = 0.15
+KP = 0.15
+KD = 0.10
 
-ALPHA_LANE_SMOOTH   = 0.6  # For line-parameter smoothing
+ALPHA_LANE_SMOOTH   = 0.7  # For line-parameter smoothing
 ALPHA_STEER_SMOOTH  = 0.4  # For camera-based steering smoothing
-SMOOTHING_ALPHA     = 0.4  # For blending grayscale override
+SMOOTHING_ALPHA     = 0.2  # For blending grayscale override
 
-CAMERA_TILT_DEFAULT = 0
-CAMERA_TILT_LEFT    = 0
-CAMERA_TILT_RIGHT   = 0
+CAMERA_TILT_DEFAULT = -15
+CAMERA_TILT_LEFT    = -15
+CAMERA_TILT_RIGHT   = -15
 
 MAX_LOST_FRAMES   = 3 # increase if false positives on line loss
 LANE_HALF_WIDTH_PX = 90 # Increase if car drifts toward detected line
 
 # Grayscale sensor + stop line
 WHITE_THRESHOLD = 700
-GRAYSCALE_OVERRIDE_TURN = 20 # Sharper turns
+GRAYSCALE_OVERRIDE_TURN = 40 # Sharper turns
 STOP_LINE_TIMEOUT = 3.0
 
 # Object Detection (frame skip
-DETECTION_EVERY_N_FRAMES = 5  # run detection every 3 frames
+DETECTION_EVERY_N_FRAMES = 3  # run detection every 3 frames
 
 # Obstacle/Emergency braking thresholds
 OBSTACLE_SIZE_THRESHOLD     = 0.20  # % of frame area => "large"
@@ -235,7 +235,7 @@ def process_frame(px_obj, frame):
     elif left_x is not None:
         lane_center_x = left_x + LANE_HALF_WIDTH_PX
     elif right_x is not None:
-        lane_center_x = right_x - LANE_HALF_WIDTH_PX
+        lane_center_x = right_x - LANE_HALF_WIDTH_PX 
     else:
         lane_center_x = frame_center_x
 
@@ -289,8 +289,8 @@ ROAD_SIGN_DETECTION_LABELS        = path('road-signs-labels.txt')
 detector = vision.Detector(ROAD_SIGN_DETECTION_MODEL_EDGETPU)
 labels   = read_label_file(ROAD_SIGN_DETECTION_LABELS)
 
-def detect_objects(frame, threshold=0.6):
-    """Run object detection on 'frame' with threshold=0.6, return objects."""
+def detect_objects(frame, threshold=0.5):
+    """Run object detection on 'frame' with threshold=0.5, return objects."""
     objs = detector.get_objects(frame, threshold=threshold)
     return objs
 
@@ -493,7 +493,7 @@ def main():
 
             # If it's a detection frame, do fresh detection
             if (frame_count % DETECTION_EVERY_N_FRAMES) == 0:
-                new_objs = detect_objects(frame, threshold=0.6)  # consistent 0.5 threshold
+                new_objs = detect_objects(frame, threshold=0.5)  # consistent 0.5 threshold
                 detect_frame = frame.copy()
                 vision.draw_objects(frame, new_objs, labels)
                 last_objects = new_objs
