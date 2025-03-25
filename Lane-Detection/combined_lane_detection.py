@@ -3,19 +3,22 @@ import numpy as np
 import time
 from picarx import Picarx
 
-px = Picarx()
+# ======================= CONSTANTS & GAINS =======================
+STEERING_LEFT_LIMIT  = -45
+STEERING_RIGHT_LIMIT =  45
 
-# =========== Steering / Speed / PD Gains ============
-STEERING_LEFT_LIMIT = -45
-STEERING_RIGHT_LIMIT = 45
-
-BASE_SPEED = 2      # Base speed for normal operation
-MAX_TURN_SPEED = 15  # Max speed on straight or gentle curves
+BASE_SPEED      = 1.5   # Normal driving speed
+MAX_TURN_SPEED  = 15  # Max speed for gentle curves
+MIN_SPEED       = 1.0 # Minimal speed for safety
 
 KP = 0.20
 KD = 0.10
 
-ALPHA = 0.2  # Steering angle smoothing
+ALPHA_LANE_SMOOTH = 0.8  # Exponential smoothing for lane lines
+ALPHA_STEER_SMOOTH = 0.2 # Smoothing for final steering from camera PD
+
+# Grayscale override smoothing
+SMOOTHING_ALPHA = 0.7  # Blending factor for final steering
 
 CAMERA_TILT_DEFAULT = -10
 CAMERA_TILT_LEFT    = -10
@@ -24,26 +27,29 @@ CAMERA_TILT_RIGHT   =  0
 MAX_LOST_FRAMES = 5
 LANE_HALF_WIDTH_PX = 80
 
-last_error = 0.0
-last_steering_angle = 0.0
-has_started = False
+# Grayscale sensor constants
+WHITE_THRESHOLD = 700
+GRAYSCALE_OVERRIDE_TURN = 30  # Hard turn offset if boundary sensor triggers
+STOP_LINE_TIMEOUT = 3.0       # Seconds to stop when all sensors see white
 
-last_left_avg  = None
-last_right_avg = None
-lost_frames_count = 0
-
-# =========== Grayscale Sensor Settings ============
-WHITE_THRESHOLD = 700  # Tune for your environment
-GRAYSCALE_OVERRIDE_TURN = 40  # Hard turn angle if boundary is detected
-STOP_LINE_TIMEOUT = 3.0  # Stop for 3 seconds if all sensors see white
-
-# =========== Initialization ============
+# ==================== GLOBAL STATE ====================
+px = Picarx()
 px.set_cam_tilt_angle(CAMERA_TILT_DEFAULT)
+
 cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
-
 time.sleep(0.5)  # Let camera/wheels settle
+
+last_error            = 0.0
+last_steering_angle   = 0.0
+lost_frames_count     = 0
+
+last_left_avg         = None
+last_right_avg        = None
+
+# We’ll store final steering across loop iterations for smoothing.
+last_final_steer_angle = 0.0
 
 def clamp(val, min_val, max_val):
     return max(min_val, min(val, max_val))
@@ -58,29 +64,36 @@ def adjust_camera_tilt(steering_angle):
         px.set_cam_tilt_angle(CAMERA_TILT_DEFAULT)
 
 def steering_control(error):
-    """PD control for steering."""
+    """
+    PD control for steering:
+      steering = KP * error + KD * (error - last_error)
+    """
     global last_error
     derivative = error - last_error
     raw_steering = KP * error + KD * derivative
     last_error = error
     return clamp(raw_steering, STEERING_LEFT_LIMIT, STEERING_RIGHT_LIMIT)
 
+def apply_gaussian_blur(frame, ksize=5):
+    return cv2.GaussianBlur(frame, (ksize, ksize), 0)
+
 def draw_roi_polygon(frame, roi_vertices, color=(0, 255, 0), thickness=2):
     pts = roi_vertices.reshape((-1, 1, 2))
     cv2.polylines(frame, [pts], isClosed=True, color=color, thickness=thickness)
 
 def region_of_interest(img, visualize_on_frame=None):
-    """Keep only bottom portion of the image."""
+    """
+    Keep only the bottom portion of the image (rough trapezoid).
+    """
     height, width = img.shape[:2]
-    
     top_y = int(0.35 * height)
     roi_vertices = np.array([[
-        (0,   height),
-        (0,   top_y),
-        (width, top_y),
-        (width, height)
+        (0,      height),
+        (0,      top_y),
+        (width,  top_y),
+        (width,  height)
     ]], dtype=np.int32)
-
+    
     if visualize_on_frame is not None:
         draw_roi_polygon(visualize_on_frame, roi_vertices)
 
@@ -88,19 +101,20 @@ def region_of_interest(img, visualize_on_frame=None):
     cv2.fillPoly(mask, roi_vertices, 255)
     return cv2.bitwise_and(img, mask)
 
-def apply_gaussian_blur(frame, ksize=5):
-    return cv2.GaussianBlur(frame, (ksize, ksize), 0) 
-
 def get_line_params(x1, y1, x2, y2):
     """Return (slope, intercept) in y=mx+b form, or None if vertical."""
     if (x2 - x1) == 0:
         return None
-    slope = (y2 - y1) / (x2 - x1)
+    slope    = (y2 - y1) / (x2 - x1)
     intercept = y1 - slope * x1
     return (slope, intercept)
 
 def running_average_line(new_line, old_line, alpha=0.9):
-    """Exponential smoothing of line parameters."""
+    """
+    Exponential smoothing of line parameters:
+      old_line, new_line => (slope, intercept)
+      updated_line = alpha*old_line + (1-alpha)*new_line
+    """
     if old_line is None:
         return new_line
     old_slope, old_int = old_line
@@ -110,37 +124,39 @@ def running_average_line(new_line, old_line, alpha=0.9):
     return (smoothed_slope, smoothed_int)
 
 def estimate_line_x_at_y(line_params, y):
-    """x = (y - b)/m for line_params = (slope, intercept)."""
+    """x = (y - b)/m, for line_params=(m, b)."""
     slope, intercept = line_params
     if abs(slope) < 1e-9:
         return None
     return (y - intercept) / slope
 
 def process_frame(frame):
-    """Run lane detection on a frame, return a *camera-based* steering angle."""
-    global has_started, last_steering_angle
-    global last_left_avg, last_right_avg
-    global lost_frames_count
+    """
+    Camera-based lane detection; returns the *camera steering angle* only.
+    We'll combine it later with grayscale overrides.
+    """
+    global last_steering_angle
+    global lost_frames_count, last_left_avg, last_right_avg
 
-    # ----- Camera-based Lane Detection -----
-    frame_blur = apply_gaussian_blur(frame, ksize=5)
-    hsv = cv2.cvtColor(frame_blur, cv2.COLOR_BGR2HSV)
+    # 1) Preprocessing
+    blurred = apply_gaussian_blur(frame, ksize=5)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
 
-    # White range masks
+    # 2) White mask
     lower_white_1 = np.array([0, 0, 200], dtype=np.uint8)
     upper_white_1 = np.array([255, 40, 255], dtype=np.uint8)
-    mask_white_1 = cv2.inRange(hsv, lower_white_1, upper_white_1)
+    mask_white_1  = cv2.inRange(hsv, lower_white_1, upper_white_1)
 
     lower_white_2 = np.array([0, 0, 160], dtype=np.uint8)
     upper_white_2 = np.array([255, 60, 255], dtype=np.uint8)
-    mask_white_2 = cv2.inRange(hsv, lower_white_2, upper_white_2)
+    mask_white_2  = cv2.inRange(hsv, lower_white_2, upper_white_2)
 
-    mask_white = cv2.bitwise_or(mask_white_1, mask_white_2)
+    mask_white    = cv2.bitwise_or(mask_white_1, mask_white_2)
 
-    # Yellow range masks
-    lower_yellow = np.array([15, 70, 100], dtype=np.uint8)
-    upper_yellow = np.array([50, 255, 255], dtype=np.uint8)
-    mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
+    # 3) Yellow mask
+    lower_yellow  = np.array([15, 70, 100], dtype=np.uint8)
+    upper_yellow  = np.array([50, 255, 255], dtype=np.uint8)
+    mask_yellow   = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
     # Combine white + yellow
     combined_mask = cv2.bitwise_or(mask_white, mask_yellow)
@@ -150,11 +166,13 @@ def process_frame(frame):
     combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
     combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
 
-    edges = cv2.Canny(combined_mask, 50, 150)
-    roi_edges = region_of_interest(edges)
+    # 4) Edges + ROI
+    edges    = cv2.Canny(combined_mask, 50, 150)
+    roi_edge = region_of_interest(edges)
 
+    # 5) Hough lines
     lines = cv2.HoughLinesP(
-        roi_edges,
+        roi_edge,
         rho=1,
         theta=np.pi / 180,
         threshold=30,
@@ -162,11 +180,12 @@ def process_frame(frame):
         maxLineGap=25
     )
 
+    # 6) Find left/right lines
     height, width = frame.shape[:2]
     frame_center_x = width // 2
     y_ref = int(height * 0.8)
 
-    left_params_list = []
+    left_params_list  = []
     right_params_list = []
 
     if lines is not None:
@@ -183,21 +202,21 @@ def process_frame(frame):
             else:
                 right_params_list.append((slope, intercept))
 
-    # Average & Smooth lines
+    # 7) Exponential smoothing for lines
     if len(left_params_list) > 0:
         avg_slope = np.mean([p[0] for p in left_params_list])
         avg_int   = np.mean([p[1] for p in left_params_list])
         new_left_line = (avg_slope, avg_int)
-        last_left_avg = running_average_line(new_left_line, last_left_avg, alpha=0.9)
+        last_left_avg = running_average_line(new_left_line, last_left_avg, alpha=ALPHA_LANE_SMOOTH)
 
     if len(right_params_list) > 0:
         avg_slope = np.mean([p[0] for p in right_params_list])
         avg_int   = np.mean([p[1] for p in right_params_list])
         new_right_line = (avg_slope, avg_int)
-        last_right_avg = running_average_line(new_right_line, last_right_avg, alpha=0.9)
+        last_right_avg = running_average_line(new_right_line, last_right_avg, alpha=ALPHA_LANE_SMOOTH)
 
-    # Check if lines were detected
-    left_detected = (len(left_params_list) > 0)
+    # Check detection
+    left_detected  = (len(left_params_list) > 0)
     right_detected = (len(right_params_list) > 0)
     if not left_detected and not right_detected:
         lost_frames_count += 1
@@ -208,8 +227,8 @@ def process_frame(frame):
     else:
         lost_frames_count = 0
 
-    # Compute the lane center
-    left_x = estimate_line_x_at_y(last_left_avg, y_ref) if last_left_avg else None
+    # 8) Calculate lane center x
+    left_x = estimate_line_x_at_y(last_left_avg,  y_ref) if last_left_avg  else None
     right_x = estimate_line_x_at_y(last_right_avg, y_ref) if last_right_avg else None
 
     if (left_x is not None) and (right_x is not None):
@@ -219,31 +238,38 @@ def process_frame(frame):
     elif right_x is not None:
         lane_center_x = right_x - LANE_HALF_WIDTH_PX
     else:
-        lane_center_x = frame_center_x  # fallback
+        lane_center_x = frame_center_x
 
+    # 9) PD control for lane
     error = lane_center_x - frame_center_x
     raw_steer_angle = steering_control(error)
-    steer_angle = ALPHA * last_steering_angle + (1 - ALPHA) * raw_steer_angle
+    
+    # Smooth final camera-based angle
+    steer_angle = (ALPHA_STEER_SMOOTH * last_steering_angle 
+                   + (1 - ALPHA_STEER_SMOOTH) * raw_steer_angle)
     last_steering_angle = steer_angle
 
-    # Draw for debugging
+    # 10) Draw for debugging
+    #  - Circle lane center & frame center
     cv2.circle(frame, (int(frame_center_x), y_ref), 5, (0, 255, 255), -1)
-    cv2.circle(frame, (int(lane_center_x), y_ref), 5, (0, 255, 0), -1)
-    cv2.line(frame, (int(frame_center_x), y_ref), (int(lane_center_x), y_ref), (0, 255, 0), 2)
+    cv2.circle(frame, (int(lane_center_x),   y_ref), 5, (0, 255,   0), -1)
+    cv2.line(frame, (int(frame_center_x), y_ref), 
+             (int(lane_center_x), y_ref), (0, 255, 0), 2)
 
-    # Draw lines if we have them
+    #  - Draw left line
     if last_left_avg is not None:
         lslope, lint = last_left_avg
         y1_draw = height
-        y2_draw = int(height/2)
+        y2_draw = int(height * 0.5)
         x1_draw = int((y1_draw - lint) / lslope)
         x2_draw = int((y2_draw - lint) / lslope)
         cv2.line(frame, (x1_draw, y1_draw), (x2_draw, y2_draw), (255, 0, 0), 3)
 
+    #  - Draw right line
     if last_right_avg is not None:
         rslope, rint = last_right_avg
         y1_draw = height
-        y2_draw = int(height/2)
+        y2_draw = int(height * 0.5)
         x1_draw = int((y1_draw - rint) / rslope)
         x2_draw = int((y2_draw - rint) / rslope)
         cv2.line(frame, (x1_draw, y1_draw), (x2_draw, y2_draw), (0, 0, 255), 3)
@@ -257,52 +283,59 @@ try:
             print("No camera feed detected.")
             break
 
-        # ========== 1) Camera-based Lane Detection =============
-        camera_steer_angle = process_frame(frame)
-
-        # ========== 2) Grayscale Sensor Check =============
+        # ========== A) Detect Stop-Line First ==========
+        # Get grayscale sensor readings
         sensor_values = px.get_grayscale_data()
-        left_sensor   = sensor_values[0]
-        middle_sensor = sensor_values[1]
-        right_sensor  = sensor_values[2]
+        left_sensor, middle_sensor, right_sensor = sensor_values
 
-        # ========== 2a) Detect "Stop Line" if ALL sensors see white ==========
-        if (left_sensor > WHITE_THRESHOLD and 
-            middle_sensor > WHITE_THRESHOLD and 
+        # If all 3 see white => full stop for STOP_LINE_TIMEOUT
+        if (left_sensor > WHITE_THRESHOLD and
+            middle_sensor > WHITE_THRESHOLD and
             right_sensor > WHITE_THRESHOLD):
-            print("All sensors see white => Stop sign / crosswalk detected!")
+            print("All sensors see white => STOP line detected!")
             px.stop()
-            time.sleep(STOP_LINE_TIMEOUT)  # Wait 3 seconds (or your chosen time)
+            time.sleep(STOP_LINE_TIMEOUT)  # e.g. 3 seconds
 
-            # After 3 seconds, let's move straight briefly to clear the line.
-            # Here we set a near-neutral steering angle (e.g., -13).
-            px.set_dir_servo_angle(-13)
-            px.forward(2)   # Move forward at speed=2 for a short distance
-            time.sleep(1)   # Move for 1 second
-            px.stop()
-            # Then continue the loop, which goes back into normal logic.
+            # After stop, re-check the camera to get a fresh direction
+            ret2, frame2 = cap.read()
+            if ret2:
+                new_camera_angle = process_frame(frame2)
+                # Reset the final steering angle to match the camera's angle
+                last_final_steer_angle = new_camera_angle
+                px.set_dir_servo_angle(new_camera_angle)
+            
+            # Then continue the loop => normal logic picks up again
             continue
 
-        # ========== 2b) Boundary Override Logic ==========
-        # If left sensor is bright => turn right
-        # If right sensor is bright => turn left
-        final_steer_angle = camera_steer_angle
-        if left_sensor > WHITE_THRESHOLD:
-            print("Left grayscale triggered => HARD right turn!")
-            final_steer_angle = GRAYSCALE_OVERRIDE_TURN
-        elif right_sensor > WHITE_THRESHOLD:
-            print("Right grayscale triggered => HARD left turn!")
-            final_steer_angle = -GRAYSCALE_OVERRIDE_TURN
+        # ========== B) Normal Lane-Following Logic ==========
+        # 1) Camera-based lane detection
+        camera_steer_angle = process_frame(frame)
 
-        # ========== 3) Send Final Steering Angle ==========
-        final_steer_angle = clamp(final_steer_angle, STEERING_LEFT_LIMIT, STEERING_RIGHT_LIMIT)
+        # 2) Check if left/right sensor triggered => "grayscale_correction"
+        grayscale_correction = 0
+        if left_sensor > WHITE_THRESHOLD:
+            # Turn right
+            grayscale_correction = GRAYSCALE_OVERRIDE_TURN
+        elif right_sensor > WHITE_THRESHOLD:
+            # Turn left
+            grayscale_correction = -GRAYSCALE_OVERRIDE_TURN
+        
+        # Combine camera angle + grayscale override
+        target_steer = camera_steer_angle + grayscale_correction
+
+        # 3) Smooth final steer to reduce jerkiness
+        raw_final = ((1 - SMOOTHING_ALPHA) * target_steer 
+                     + SMOOTHING_ALPHA * last_final_steer_angle)
+
+        final_steer_angle = clamp(raw_final, STEERING_LEFT_LIMIT, STEERING_RIGHT_LIMIT)
+        last_final_steer_angle = final_steer_angle
+
+        # 4) Send to servo
         px.set_dir_servo_angle(final_steer_angle)
         adjust_camera_tilt(final_steer_angle)
 
-        # ========== 4) Forward Speed Logic ==========
-        # The sharper the turn, the slower we go
+        # 5) Speed logic
         turn_factor = 0.5
-        MIN_SPEED   = 1.0
         raw_speed   = BASE_SPEED - turn_factor * abs(final_steer_angle)
         speed       = clamp(raw_speed, MIN_SPEED, MAX_TURN_SPEED)
 
@@ -312,7 +345,7 @@ try:
 
         px.forward(speed)
 
-        # Show debug windows
+        # ========== C) Show Debug Window ==========
         cv2.imshow("Lane Detection", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
