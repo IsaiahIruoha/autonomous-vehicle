@@ -19,12 +19,12 @@ from pycoral.utils.dataset import read_label_file
 # Steering & Speed
 STEERING_LEFT_LIMIT   = -45
 STEERING_RIGHT_LIMIT  =  45
-BASE_SPEED            =  0.5
+BASE_SPEED            =  0.25
 MAX_TURN_SPEED        = 20
 MIN_SPEED             =  0.5
 
 # For Proportional and Derivative, if it weaves back and forth increase KD and decrease KP
-KP = 0.15 
+KP = 0.10 
 KD = 0.10
 
 ALPHA_LANE_SMOOTH   = 0.6  # For line-parameter smoothing
@@ -33,7 +33,7 @@ SMOOTHING_ALPHA     = 0.4  # For blending grayscale override
 
 CAMERA_TILT_DEFAULT = -10
 CAMERA_TILT_LEFT    = -10
-CAMERA_TILT_RIGHT   =  -10
+CAMERA_TILT_RIGHT   = -10
 
 MAX_LOST_FRAMES   = 3 # increase if false positives on line loss
 LANE_HALF_WIDTH_PX = 85 # Increase if car drifts toward detected line
@@ -415,9 +415,6 @@ def main():
                     new_camera_angle = process_frame(px, frame2)
                     last_final_steer_angle = new_camera_angle
                     px.set_dir_servo_angle(new_camera_angle)
-
-                # Optional move to clear line:
-                px.set_dir_servo_angle(-13)
                 px.forward(1.5)
                 time.sleep(0.5)
                 px.stop()
