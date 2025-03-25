@@ -287,8 +287,8 @@ ROAD_SIGN_DETECTION_LABELS        = path('road-signs-labels.txt')
 detector = vision.Detector(ROAD_SIGN_DETECTION_MODEL_EDGETPU)
 labels   = read_label_file(ROAD_SIGN_DETECTION_LABELS)
 
-def detect_objects(frame, threshold=0.5):
-    """Run object detection on 'frame' with threshold=0.5, return objects."""
+def detect_objects(frame, threshold=0.6):
+    """Run object detection on 'frame' with threshold=0.6, return objects."""
     objs = detector.get_objects(frame, threshold=threshold)
     return objs
 
@@ -462,7 +462,7 @@ def main():
 
             # If it's a detection frame, do fresh detection
             if (frame_count % DETECTION_EVERY_N_FRAMES) == 0:
-                new_objs = detect_objects(frame, threshold=0.5)  # consistent 0.5 threshold
+                new_objs = detect_objects(frame, threshold=0.6)  # consistent 0.5 threshold
                 detect_frame = frame.copy()
                 vision.draw_objects(frame, new_objs, labels)
                 last_objects = new_objs
