@@ -19,32 +19,32 @@ from pycoral.utils.dataset import read_label_file
 # Steering & Speed
 STEERING_LEFT_LIMIT   = -45
 STEERING_RIGHT_LIMIT  =  45
-BASE_SPEED            =  0.25
+BASE_SPEED            =  1
 MAX_TURN_SPEED        = 20
 MIN_SPEED             =  0.5
 
 # For Proportional and Derivative, if it weaves back and forth increase KD and decrease KP
-KP = 0.15
+KP = 0.20
 KD = 0.15
 
 ALPHA_LANE_SMOOTH   = 0.6  # For line-parameter smoothing
 ALPHA_STEER_SMOOTH  = 0.4  # For camera-based steering smoothing
 SMOOTHING_ALPHA     = 0.4  # For blending grayscale override
 
-CAMERA_TILT_DEFAULT = -10
-CAMERA_TILT_LEFT    = -10
-CAMERA_TILT_RIGHT   = -10
+CAMERA_TILT_DEFAULT = 0
+CAMERA_TILT_LEFT    = 0
+CAMERA_TILT_RIGHT   = 0
 
 MAX_LOST_FRAMES   = 3 # increase if false positives on line loss
 LANE_HALF_WIDTH_PX = 90 # Increase if car drifts toward detected line
 
 # Grayscale sensor + stop line
 WHITE_THRESHOLD = 700
-GRAYSCALE_OVERRIDE_TURN = 40 # Sharper turns
+GRAYSCALE_OVERRIDE_TURN = 20 # Sharper turns
 STOP_LINE_TIMEOUT = 3.0
 
-# Object Detection (frame skip)
-DETECTION_EVERY_N_FRAMES = 3  # run detection every 5 frames
+# Object Detection (frame skip
+DETECTION_EVERY_N_FRAMES = 5  # run detection every 3 frames
 
 # Obstacle/Emergency braking thresholds
 OBSTACLE_SIZE_THRESHOLD     = 0.20  # % of frame area => "large"
@@ -173,7 +173,7 @@ def process_frame(px_obj, frame):
         roi_edge,
         rho=1,
         theta=np.pi / 180,
-        threshold=30,
+        threshold=20,
         minLineLength=20,
         maxLineGap=25
     )
