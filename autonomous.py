@@ -14,39 +14,40 @@ from aiymakerkit import utils
 from pycoral.utils.dataset import read_label_file
 
 # ------------------------------------------------------------
-#   A) CONSTANTS & SETTINGS
+#   CONSTANTS & SETTINGS
 # ------------------------------------------------------------
 # Steering & Speed
 STEERING_LEFT_LIMIT   = -45
 STEERING_RIGHT_LIMIT  =  45
-BASE_SPEED            =  1.5
-MAX_TURN_SPEED        = 15
-MIN_SPEED             =  1.0
+BASE_SPEED            =  0.75
+MAX_TURN_SPEED        = 20
+MIN_SPEED             =  0.75
 
-KP = 0.20
+# For Proportional and Derivative, if it weaves back and forth increase KD and decrease KP
+KP = 0.15 
 KD = 0.10
 
-ALPHA_LANE_SMOOTH   = 0.8  # For line-parameter smoothing
-ALPHA_STEER_SMOOTH  = 0.2  # For camera-based steering smoothing
-SMOOTHING_ALPHA     = 0.7  # For blending grayscale override
+ALPHA_LANE_SMOOTH   = 0.6  # For line-parameter smoothing
+ALPHA_STEER_SMOOTH  = 0.4  # For camera-based steering smoothing
+SMOOTHING_ALPHA     = 0.4  # For blending grayscale override
 
-CAMERA_TILT_DEFAULT = 0
+CAMERA_TILT_DEFAULT = -10
 CAMERA_TILT_LEFT    = -10
-CAMERA_TILT_RIGHT   =  10
+CAMERA_TILT_RIGHT   =  -10
 
-MAX_LOST_FRAMES   = 5
-LANE_HALF_WIDTH_PX = 80
+MAX_LOST_FRAMES   = 3 # increase if false positives on line loss
+LANE_HALF_WIDTH_PX = 85 # Increase if car drifts toward detected line
 
 # Grayscale sensor + stop line
 WHITE_THRESHOLD = 700
-GRAYSCALE_OVERRIDE_TURN = 30
+GRAYSCALE_OVERRIDE_TURN = 30 # Sharper turns
 STOP_LINE_TIMEOUT = 3.0
 
 # Object Detection (frame skip)
-DETECTION_EVERY_N_FRAMES = 5  # run detection every 5 frames
+DETECTION_EVERY_N_FRAMES = 3  # run detection every 5 frames
 
 # Obstacle/Emergency braking thresholds
-OBSTACLE_SIZE_THRESHOLD     = 0.15  # % of frame area => "large"
+OBSTACLE_SIZE_THRESHOLD     = 0.20  # % of frame area => "large"
 OBSTACLE_CENTER_TOLERANCE_X = 0.3   # ± fraction of frame width from center
 
 # Global Lane Detection
@@ -133,11 +134,11 @@ def process_frame(px_obj, frame):
     global last_steering_angle, lost_frames_count
     global last_left_avg, last_right_avg
 
-    # 1) Preprocessing
+    # Preprocessing
     blurred = apply_gaussian_blur(frame, ksize=5)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
 
-    # 2) White mask
+    # White mask
     lower_white_1 = np.array([0, 0, 200], dtype=np.uint8)
     upper_white_1 = np.array([255, 40, 255], dtype=np.uint8)
     mask_white_1  = cv2.inRange(hsv, lower_white_1, upper_white_1)
@@ -148,7 +149,7 @@ def process_frame(px_obj, frame):
 
     mask_white    = cv2.bitwise_or(mask_white_1, mask_white_2)
 
-    # 3) Yellow mask
+    # Yellow mask
     lower_yellow  = np.array([15, 70, 100], dtype=np.uint8)
     upper_yellow  = np.array([50, 255, 255], dtype=np.uint8)
     mask_yellow   = cv2.inRange(hsv, lower_yellow, upper_yellow)
@@ -161,11 +162,11 @@ def process_frame(px_obj, frame):
     combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
     combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
 
-    # 4) Edges + ROI
+    # Edges + ROI
     edges    = cv2.Canny(combined_mask, 50, 150)
     roi_edge = region_of_interest(edges)
 
-    # 5) Hough lines
+    # Hough lines
     lines = cv2.HoughLinesP(
         roi_edge,
         rho=1,
@@ -175,7 +176,7 @@ def process_frame(px_obj, frame):
         maxLineGap=25
     )
 
-    # 6) Split lines into left vs. right
+    # Split lines into left vs. right
     height, width = frame.shape[:2]
     frame_center_x = width // 2
     y_ref = int(height * 0.8)
@@ -198,7 +199,7 @@ def process_frame(px_obj, frame):
             else:
                 right_params_list.append((slope, intercept))
 
-    # 7) Exponential smoothing for left/right lines
+    # Exponential smoothing for left/right lines
     if len(left_params_list) > 0:
         avg_slope = np.mean([p[0] for p in left_params_list])
         avg_int   = np.mean([p[1] for p in left_params_list])
@@ -223,7 +224,7 @@ def process_frame(px_obj, frame):
     else:
         lost_frames_count = 0
 
-    # 8) Compute lane center
+    # Compute lane center
     left_x  = estimate_line_x_at_y(last_left_avg,  y_ref) if last_left_avg  else None
     right_x = estimate_line_x_at_y(last_right_avg, y_ref) if last_right_avg else None
 
@@ -236,7 +237,7 @@ def process_frame(px_obj, frame):
     else:
         lane_center_x = frame_center_x
 
-    # 9) PD control for steering
+    # PD control for steering
     error = lane_center_x - frame_center_x
     raw_steer_angle = steering_control(error)
 
@@ -245,7 +246,7 @@ def process_frame(px_obj, frame):
                    + (1 - ALPHA_STEER_SMOOTH) * raw_steer_angle)
     last_steering_angle = steer_angle
 
-    # 10) Draw lines + debug centers
+    # Draw lines + debug centers
     # Frame center (yellow)
     cv2.circle(frame, (int(frame_center_x), y_ref), 5, (0, 255, 255), -1)
     # Lane center (green)
@@ -286,8 +287,8 @@ ROAD_SIGN_DETECTION_LABELS        = path('road-signs-labels.txt')
 detector = vision.Detector(ROAD_SIGN_DETECTION_MODEL_EDGETPU)
 labels   = read_label_file(ROAD_SIGN_DETECTION_LABELS)
 
-def detect_objects(frame, threshold=0.6):
-    """Run object detection on 'frame' with threshold=0.6, return objects."""
+def detect_objects(frame, threshold=0.5):
+    """Run object detection on 'frame' with threshold=0.5, return objects."""
     objs = detector.get_objects(frame, threshold=threshold)
     return objs
 
@@ -349,16 +350,34 @@ def blink_hazard_signal(duration=3, on_time=0.3, off_time=0.3):
 # ------------------------------------------------------------
 def main():
     px = Picarx()
+    # Point Straight
+    px.set_dir_servo_angle(0)
     px.set_cam_tilt_angle(CAMERA_TILT_DEFAULT)
+
+    # Setup Camera
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
-    time.sleep(0.5)
+
+    # Wait 3 seconds
+    print("[INFO] Stabilizing... waiting 3 seconds.")
+    time.sleep(3.0)
+
+    # Capture 1 frame
+    ret, init_frame = cap.read()
+    if ret:
+        print("[INFO] Performing initial lane detection...")
+        initial_angle = process_frame(px, init_frame)
+        px.set_dir_servo_angle(initial_angle)
+    else:
+        print("[WARNING] Could not grab initial frame.")
 
     global last_final_steer_angle
+    last_final_steer_angle = 0.0
 
     frame_count = 0
     last_objects = []  # store last detection result for continuous bounding-box display
+    yield_mode = False  
 
     try:
         while True:
@@ -367,7 +386,7 @@ def main():
                 print("[ERROR] No camera feed detected.")
                 break
 
-            # ========== A) Check for STOP line via grayscale sensors ==========
+            # ========== Check for STOP line via grayscale sensors ==========
             sensor_values = px.get_grayscale_data()
             left_sensor, middle_sensor, right_sensor = sensor_values
 
@@ -396,7 +415,7 @@ def main():
 
                 continue
 
-            # ========== B) Lane Detection => camera steer angle ==========
+            # ========== Lane Detection => camera steer angle ==========
             camera_steer_angle = process_frame(px, frame)
 
             # Grayscale boundary override (left/right)
@@ -418,25 +437,34 @@ def main():
             px.set_dir_servo_angle(final_steer_angle)
             adjust_camera_tilt(px, final_steer_angle)
 
+            #  If we’re steering left more than 15°, blink left
+            if final_steer_angle < -15:
+                blink_left_signal(duration=1, on_time=0.2, off_time=0.2)
+            elif final_steer_angle > 15:
+                blink_right_signal(duration=1, on_time=0.2, off_time=0.2)
+
             # Speed logic
-            turn_factor = 0.5
+            turn_factor = 0.5  # higher increase slow sharply for big steering angles
             raw_speed = BASE_SPEED - turn_factor * abs(final_steer_angle)
             speed = clamp(raw_speed, MIN_SPEED, MAX_TURN_SPEED)
-            px.forward(speed)
+            if yield_mode:
+                px.forward(speed * 0.5)
+            else:
+                px.forward(speed)
 
-            # ========== C) Object Detection (skip frames) ==========
+
+            # ========== Object Detection (skip frames) ==========
             frame_count += 1
-            detect_frame = frame.copy()  # We'll draw bounding boxes on this copy
 
             # Draw last known bounding boxes
             if last_objects:
-                vision.draw_objects(detect_frame, last_objects, labels)
+                vision.draw_objects(frame, last_objects, labels)
 
             # If it's a detection frame, do fresh detection
             if (frame_count % DETECTION_EVERY_N_FRAMES) == 0:
-                new_objs = detect_objects(detect_frame, threshold=0.6)  # consistent 0.6 threshold
+                new_objs = detect_objects(frame, threshold=0.5)  # consistent 0.5 threshold
                 detect_frame = frame.copy()
-                vision.draw_objects(detect_frame, new_objs, labels)
+                vision.draw_objects(frame, new_objs, labels)
                 last_objects = new_objs
 
                 # Check for sign or obstacle
@@ -450,11 +478,14 @@ def main():
                     frame_area = frame.shape[0] * frame.shape[1]
                     center_x   = (x1 + x2) / 2.0
 
+
+                    STOP_SIGN_LIGHT_DURATION = 3  # 3 seconds for now
+                    
                     # Specific signs
                     if cls_label == "sign_stop":
-                        print("[DETECT] STOP sign => blink brake lights.")
+                        print("[DETECT] STOP sign => STEADY brake lights.")
                         turn_on_brake_lights()
-                        time.sleep(1)
+                        time.sleep(STOP_SIGN_LIGHT_DURATION)
                         turn_off_brake_lights()
                     elif cls_label == "sign_oneway_left":
                         print("[DETECT] One-way left => blink left signal.")
@@ -463,23 +494,88 @@ def main():
                         print("[DETECT] One-way right => blink right signal.")
                         blink_right_signal(duration=2)
 
+                    elif cls_label == "sign_noentry":
+                        print("[DETECT] No Entry sign => reversing away from blocked road.")
+                        px.stop()
+                        turn_on_brake_lights()
+                        # Flash hazard signals briefly 
+                        blink_hazard_signal(duration=2)
+                        # Wait a moment
+                        time.sleep(1.0)
+                        # Reverse away from danger
+                        print("[ACTION] Reversing to avoid no-entry road...")
+                        px.backward(1.0)  # Speed=1.0 for reversing
+                        time.sleep(2.0)   # Reverse for 2 seconds (tweak as needed)
+                        px.stop()
+                        # Turn off brake lights after reversing
+                        turn_off_brake_lights()
+                        print("[MOVE] Attempting to move forward again.")
+                        px.forward(speed)  # 'speed' from your main loop
+
+                    elif cls_label in ["sign_yield", "road_crosswalk"]:
+                        print(f"[DETECT] {cls_label} => brake lights + slow 50% for 5s.")
+                        turn_on_brake_lights()
+                        time.sleep(1)
+                        turn_off_brake_lights()
+                    
+                        # Temporarily slow
+                        old_yield_mode = yield_mode
+                        yield_mode = True
+                        time.sleep(5)  # 5 seconds of half speed
+                        yield_mode = old_yield_mode
+                    
                     # Obstacle Handling
-                    if cls_label in ["duck_regular", "duck_specialty", "vehicle"]:
-                        if (box_area / frame_area) > OBSTACLE_SIZE_THRESHOLD:
-                            frame_width = frame.shape[1]
-                            dist_from_center = abs(center_x - (frame_width / 2.0))
+                    frame_width = frame.shape[1]
+                    dist_from_center = abs(center_x - (frame_width / 2.0))
+                    
+                    # Duck Handling — stop and wait until duck leaves
+                    if cls_label in ["duck_regular", "duck_specialty"]:
+                        if (box_area / frame_area) > DUCK_THRESHOLD:
                             if dist_from_center < (OBSTACLE_CENTER_TOLERANCE_X * frame_width):
-                                print("[EMERGENCY] Large obstacle in lane => STOP + hazard!")
+                                print("[EMERGENCY] Duck detected in lane => STOP + hazard!")
                                 px.stop()
                                 blink_hazard_signal(duration=2)
                                 time.sleep(2)
-                                # px.forward(speed) # optional continue
+                    
+                                # Stay stopped until duck is gone
+                                duck_still_present = True
+                                while duck_still_present:
+                                    ret_check, frame_check = cap.read()
+                                    if not ret_check:
+                                        break  # Safety: camera failed
+                    
+                                    check_objs = detect_objects(frame_check, threshold=0.5)
+                                    duck_still_present = False  # assume gone unless proven otherwise
+                    
+                                    for obj2 in check_objs:
+                                        label2 = labels.get(obj2.id, "unknown")
+                                        if label2 in ["duck_regular", "duck_specialty"]:
+                                            x1, y1, x2, y2 = obj2.bbox
+                                            box_w2 = x2 - x1
+                                            box_h2 = y2 - y1
+                                            area2 = box_w2 * box_h2
+                                            center_x2 = (x1 + x2) / 2.0
+                                            dist2 = abs(center_x2 - (frame_width / 2.0))
+                    
+                                            if (area2 / frame_area) > DUCK_THRESHOLD and dist2 < (OBSTACLE_CENTER_TOLERANCE_X * frame_width):
+                                                duck_still_present = True
+                                                print("[WAIT] Duck still in lane... waiting.")
+                                                break
+                    
+                                    time.sleep(0.25)  # Avoid overloading camera
+                                print("[CLEAR] Duck is gone, resuming.")
+                    
+                    elif cls_label == "vehicle":
+                        if (box_area / frame_area) > OBSTACLE_SIZE_THRESHOLD:
+                            if dist_from_center < (OBSTACLE_CENTER_TOLERANCE_X * frame_width):
+                                print("[EMERGENCY] Vehicle in lane => STOP + hazard!")
+                                px.stop()
+                                blink_hazard_signal(duration=2)
+                                time.sleep(2)
+                                px.forward(speed) # optional continue for vehicles
 
-            # Show lane lines
-            cv2.imshow("Lane Detection", frame)
-            # Show bounding boxes
-            cv2.imshow("Object Detection", detect_frame)
-
+            # Show Car View
+            cv2.imshow("PiCar-X View", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
@@ -490,7 +586,7 @@ def main():
         px.stop()
         turn_off_brake_lights()
         cap.release()
-        cv2.destroyAllWindows()
+        cv2.destroyAllWindows()u
 
 # Entry Point
 if __name__ == "__main__":
