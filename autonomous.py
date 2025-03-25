@@ -49,6 +49,7 @@ DETECTION_EVERY_N_FRAMES = 3  # run detection every 5 frames
 # Obstacle/Emergency braking thresholds
 OBSTACLE_SIZE_THRESHOLD     = 0.20  # % of frame area => "large"
 OBSTACLE_CENTER_TOLERANCE_X = 0.3   # ± fraction of frame width from center
+DUCK_THRESHOLD = 0.10 # Size of duck in lane 
 
 # Global Lane Detection
 last_error           = 0.0
@@ -379,6 +380,14 @@ def main():
     last_objects = []  # store last detection result for continuous bounding-box display
     yield_mode = False  
 
+    # For STOP sign brake lights
+    stop_sign_active = False
+    stop_sign_end_time = 0.0
+    
+    # For yield/crosswalk slowdown
+    yield_active = False
+    yield_end_time = 0.0
+
     try:
         while True:
             ret, frame = cap.read()
@@ -443,6 +452,30 @@ def main():
             elif final_steer_angle > 25:
                 blink_right_signal(duration=1, on_time=0.2, off_time=0.2)
 
+            # STOP Sign Lights
+            if stop_sign_active:
+                if time.time() < stop_sign_end_time:
+                    # Keep brake lights on
+                    turn_on_brake_lights()
+                else:
+                    # Time's up turn them off
+                    stop_sign_active = False
+                    turn_off_brake_lights()
+            
+            # Yield/Crosswalk => half speed
+            if yield_active:
+                if time.time() < yield_end_time:
+                    # Keep yield mode on
+                    yield_mode = True
+                    if time.time() - (yield_end_time - 5) < 1:
+                        turn_on_brake_lights()
+                    else:
+                        turn_off_brake_lights()
+                else:
+                    yield_active = False
+                    yield_mode   = False
+                    turn_off_brake_lights()  
+            
             # Speed logic
             turn_factor = 0.75  # higher increase slow sharply for big steering angles
             raw_speed = BASE_SPEED - turn_factor * abs(final_steer_angle)
@@ -483,10 +516,9 @@ def main():
                     
                     # Specific signs
                     if cls_label == "sign_stop":
-                        print("[DETECT] STOP sign => STEADY brake lights.")
-                        turn_on_brake_lights()
-                        time.sleep(STOP_SIGN_LIGHT_DURATION)
-                        turn_off_brake_lights()
+                        print("[DETECT] STOP sign => STEADY brake lights (non-blocking).")
+                        stop_sign_active = True
+                        stop_sign_end_time = time.time() + STOP_SIGN_LIGHT_DURATION
                     elif cls_label == "sign_oneway_left":
                         print("[DETECT] One-way left => blink left signal.")
                         blink_left_signal(duration=2)
@@ -513,16 +545,11 @@ def main():
                         px.forward(speed)  # 'speed' from your main loop
 
                     elif cls_label in ["sign_yield", "road_crosswalk"]:
-                        print(f"[DETECT] {cls_label} => brake lights + slow 50% for 5s.")
-                        turn_on_brake_lights()
-                        time.sleep(1)
-                        turn_off_brake_lights()
-                    
-                        # Temporarily slow
-                        old_yield_mode = yield_mode
-                        yield_mode = True
-                        time.sleep(5)  # 5 seconds of half speed
-                        yield_mode = old_yield_mode
+                        print(f"[DETECT] {cls_label} => brake lights + slow 50% for 5s (non-blocking).")
+                        # Turn on brake lights for 1 second
+                        # We'll do that in the main loop with a new 'yield_lights_active' 
+                        yield_active = True
+                        yield_end_time = time.time() + 5
                     
                     # Obstacle Handling
                     frame_width = frame.shape[1]
