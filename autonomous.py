@@ -250,7 +250,7 @@ ROAD_SIGN_DETECTION_LABELS        = path('road-signs-labels.txt')
 detector = vision.Detector(ROAD_SIGN_DETECTION_MODEL_EDGETPU)
 labels   = read_label_file(ROAD_SIGN_DETECTION_LABELS)
 
-def detect_objects(frame, threshold=0.3):
+def detect_objects(frame, threshold=0.6):
     """Run object detection on 'frame', return objects. We also draw bounding boxes ourselves."""
     objs = detector.get_objects(frame, threshold=threshold)
     return objs
