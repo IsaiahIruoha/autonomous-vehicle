@@ -240,41 +240,37 @@ def process_frame(frame):
     else:
         lane_center_x = frame_center_x
 
-    # 9) PD control for lane
-    error = lane_center_x - frame_center_x
-    raw_steer_angle = steering_control(error)
-    
-    # Smooth final camera-based angle
-    steer_angle = (ALPHA_STEER_SMOOTH * last_steering_angle 
-                   + (1 - ALPHA_STEER_SMOOTH) * raw_steer_angle)
-    last_steering_angle = steer_angle
+    # 9) PD control
+error = lane_center_x - frame_center_x
+raw_steer_angle = steering_control(error)
 
-    # 10) Draw for debugging
-    #  - Circle lane center & frame center
-    cv2.circle(frame, (int(frame_center_x), y_ref), 5, (0, 255, 255), -1)
-    cv2.circle(frame, (int(lane_center_x),   y_ref), 5, (0, 255,   0), -1)
-    cv2.line(frame, (int(frame_center_x), y_ref), 
-             (int(lane_center_x), y_ref), (0, 255, 0), 2)
+steer_angle = (ALPHA_STEER_SMOOTH * last_steering_angle
+               + (1 - ALPHA_STEER_SMOOTH) * raw_steer_angle)
+last_steering_angle = steer_angle
 
-    #  - Draw left line
-    if last_left_avg is not None:
-        lslope, lint = last_left_avg
-        y1_draw = height
-        y2_draw = int(height * 0.5)
-        x1_draw = int((y1_draw - lint) / lslope)
-        x2_draw = int((y2_draw - lint) / lslope)
-        cv2.line(frame, (x1_draw, y1_draw), (x2_draw, y2_draw), (255, 0, 0), 3)
+cv2.circle(frame, (int(frame_center_x), y_ref), 5, (0, 255, 255), -1)  # yellow circle at frame center
+cv2.circle(frame, (int(lane_center_x),   y_ref), 5, (0, 255,   0), -1) # green circle at lane center
+cv2.line(frame, (int(frame_center_x), y_ref), (int(lane_center_x), y_ref), (0, 255, 0), 2)
 
-    #  - Draw right line
-    if last_right_avg is not None:
-        rslope, rint = last_right_avg
-        y1_draw = height
-        y2_draw = int(height * 0.5)
-        x1_draw = int((y1_draw - rint) / rslope)
-        x2_draw = int((y2_draw - rint) / rslope)
-        cv2.line(frame, (x1_draw, y1_draw), (x2_draw, y2_draw), (0, 0, 255), 3)
+# Draw left line in BLUE
+if last_left_avg is not None:
+    lslope, lint = last_left_avg
+    y1_draw = height
+    y2_draw = int(height * 0.5)
+    x1_draw = int((y1_draw - lint) / lslope)
+    x2_draw = int((y2_draw - lint) / lslope)
+    cv2.line(frame, (x1_draw, y1_draw), (x2_draw, y2_draw), (255, 0, 0), 3)
 
-    return steer_angle
+# Draw right line in RED
+if last_right_avg is not None:
+    rslope, rint = last_right_avg
+    y1_draw = height
+    y2_draw = int(height * 0.5)
+    x1_draw = int((y1_draw - rint) / rslope)
+    x2_draw = int((y2_draw - rint) / rslope)
+    cv2.line(frame, (x1_draw, y1_draw), (x2_draw, y2_draw), (0, 0, 255), 3)
+
+return steer_angle
 
 try:
     while True:
