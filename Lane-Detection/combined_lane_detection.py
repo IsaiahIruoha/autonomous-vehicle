@@ -9,13 +9,13 @@ px = Picarx()
 STEERING_LEFT_LIMIT = -45
 STEERING_RIGHT_LIMIT = 45
 
-BASE_SPEED = 2      # Base speed for normal operation
+BASE_SPEED = 1.5      # Base speed for normal operation
 MAX_TURN_SPEED = 15  # Max speed on straight or gentle curves
 
 KP = 0.20
 KD = 0.10
 
-ALPHA = 0.2  # Steering angle smoothing
+ALPHA = 0.3  # Steering angle smoothing
 
 CAMERA_TILT_DEFAULT = -10
 CAMERA_TILT_LEFT    = -10
@@ -34,7 +34,7 @@ lost_frames_count = 0
 
 # =========== Grayscale Sensor Settings ============
 WHITE_THRESHOLD = 700  # Tune for your environment
-GRAYSCALE_OVERRIDE_TURN = 40  # Hard turn angle if boundary is detected
+GRAYSCALE_OVERRIDE_TURN = 30  # Hard turn angle if boundary is detected
 STOP_LINE_TIMEOUT = 3.0  # Stop for 3 seconds if all sensors see white
 
 # =========== Initialization ============
@@ -99,7 +99,7 @@ def get_line_params(x1, y1, x2, y2):
     intercept = y1 - slope * x1
     return (slope, intercept)
 
-def running_average_line(new_line, old_line, alpha=0.9):
+def running_average_line(new_line, old_line, alpha=0.3):
     """Exponential smoothing of line parameters."""
     if old_line is None:
         return new_line
@@ -188,13 +188,13 @@ def process_frame(frame):
         avg_slope = np.mean([p[0] for p in left_params_list])
         avg_int   = np.mean([p[1] for p in left_params_list])
         new_left_line = (avg_slope, avg_int)
-        last_left_avg = running_average_line(new_left_line, last_left_avg, alpha=0.9)
+        last_left_avg = running_average_line(new_left_line, last_left_avg, alpha=0.3)
 
     if len(right_params_list) > 0:
         avg_slope = np.mean([p[0] for p in right_params_list])
         avg_int   = np.mean([p[1] for p in right_params_list])
         new_right_line = (avg_slope, avg_int)
-        last_right_avg = running_average_line(new_right_line, last_right_avg, alpha=0.9)
+        last_right_avg = running_average_line(new_right_line, last_right_avg, alpha=0.3)
 
     # Check if lines were detected
     left_detected = (len(left_params_list) > 0)
