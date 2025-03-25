@@ -296,6 +296,11 @@ try:
             px.stop()
             time.sleep(STOP_LINE_TIMEOUT)  # e.g. 3 seconds
 
+            px.set_dir_servo_angle(-13)  # neutral/straight steering (tweak if needed)
+            px.forward(0.3)                # forward at speed=2 (tweak if needed)
+            time.sleep(0.5)                # move for 1 second
+            px.stop()
+
             # After stop, re-check the camera to get a fresh direction
             ret2, frame2 = cap.read()
             if ret2:
