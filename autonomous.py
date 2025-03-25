@@ -24,8 +24,8 @@ MAX_TURN_SPEED        = 20
 MIN_SPEED             =  0.5
 
 # For Proportional and Derivative, if it weaves back and forth increase KD and decrease KP
-KP = 0.10 
-KD = 0.10
+KP = 0.15
+KD = 0.15
 
 ALPHA_LANE_SMOOTH   = 0.6  # For line-parameter smoothing
 ALPHA_STEER_SMOOTH  = 0.4  # For camera-based steering smoothing
@@ -36,11 +36,11 @@ CAMERA_TILT_LEFT    = -10
 CAMERA_TILT_RIGHT   = -10
 
 MAX_LOST_FRAMES   = 3 # increase if false positives on line loss
-LANE_HALF_WIDTH_PX = 85 # Increase if car drifts toward detected line
+LANE_HALF_WIDTH_PX = 90 # Increase if car drifts toward detected line
 
 # Grayscale sensor + stop line
 WHITE_THRESHOLD = 700
-GRAYSCALE_OVERRIDE_TURN = 30 # Sharper turns
+GRAYSCALE_OVERRIDE_TURN = 40 # Sharper turns
 STOP_LINE_TIMEOUT = 3.0
 
 # Object Detection (frame skip)
@@ -151,7 +151,8 @@ def process_frame(px_obj, frame):
     mask_white    = cv2.bitwise_or(mask_white_1, mask_white_2)
 
     # Yellow mask
-    lower_yellow  = np.array([15, 70, 100], dtype=np.uint8)
+    
+    lower_yellow  = np.array([15, 30, 50], dtype=np.uint8)  
     upper_yellow  = np.array([50, 255, 255], dtype=np.uint8)
     mask_yellow   = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
