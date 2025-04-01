@@ -1,0 +1,18 @@
+function A_Star(start, goal):
+    open_set = {start}
+    g_score[start] = 0
+    f_score[start] = heuristic(start, goal)
+    
+    while open_set is not empty:
+        current = node in open_set with lowest f_score
+        if current == goal:
+            return reconstruct_path(came_from, current)
+        remove current from open_set
+        for each neighbor of current:
+            tentative_g = g_score[current] + cost(current, neighbor)
+            if tentative_g < g_score[neighbor]:
+                came_from[neighbor] = current
+                g_score[neighbor] = tentative_g
+                f_score[neighbor] = tentative_g + heuristic(neighbor, goal)
+                add neighbor to open_set if not present
+    return failure
